@@ -35,37 +35,46 @@ export const GRAPHIC_TYPES = [
   "strategy_diagram",
 ] as const;
 
+export const ANALYSIS_STATUSES = [
+  "not_started",
+  "pending",
+  "processed_needs_review",
+  "reviewed",
+  "confirmed",
+] as const;
+
+export const GRAPHIC_STATUSES = [
+  "pending",
+  "generated",
+  "needs_review",
+  "approved",
+  "error",
+] as const;
+
+export const GRAPHIC_FORMATS = ["svg", "png", "pdf"] as const;
+
+export const LAYOUT_PLAN_STATUSES = [
+  "pending",
+  "ready",
+  "needs_review",
+  "approved",
+] as const;
+
+export const OVERFLOW_POLICIES = [
+  "add_page_if_needed",
+  "shrink_text",
+  "manual_review",
+] as const;
+
 export type AssetCategory = (typeof ASSET_CATEGORIES)[number];
 export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
 export type RequirementSeverity = (typeof REQUIREMENT_SEVERITIES)[number];
 export type GraphicType = (typeof GRAPHIC_TYPES)[number];
-
-export type AnalysisStatus =
-  | "not_started"
-  | "pending"
-  | "processed_needs_review"
-  | "reviewed"
-  | "confirmed";
-
-export type GraphicStatus =
-  | "pending"
-  | "generated"
-  | "needs_review"
-  | "approved"
-  | "error";
-
-export type GraphicFormat = "svg" | "png" | "pdf";
-
-export type LayoutPlanStatus =
-  | "pending"
-  | "ready"
-  | "needs_review"
-  | "approved";
-
-export type OverflowPolicy =
-  | "add_page_if_needed"
-  | "shrink_text"
-  | "manual_review";
+export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
+export type GraphicStatus = (typeof GRAPHIC_STATUSES)[number];
+export type GraphicFormat = (typeof GRAPHIC_FORMATS)[number];
+export type LayoutPlanStatus = (typeof LAYOUT_PLAN_STATUSES)[number];
+export type OverflowPolicy = (typeof OVERFLOW_POLICIES)[number];
 
 export type SurveyStatus =
   | "empty"

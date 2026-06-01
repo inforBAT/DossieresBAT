@@ -1,10 +1,21 @@
 import {
+  ANALYSIS_STATUSES,
   ASSET_CATEGORIES,
   EMPTY_PROJECT_INPUT_V2,
+  GRAPHIC_FORMATS,
+  GRAPHIC_STATUSES,
+  GRAPHIC_TYPES,
+  LAYOUT_PLAN_STATUSES,
+  OVERFLOW_POLICIES,
   WORKFLOW_STATUSES,
   type AssetCategory,
   type AssetsBlock,
   type DossieresWebhookPayload,
+  type AnalysisStatus,
+  type GraphicFormat,
+  type GraphicSpec,
+  type GraphicStatus,
+  type GraphicType,
   type LayoutPlanStatus,
   type OverflowPolicy,
   type PlanningStatus,
@@ -78,6 +89,12 @@ function normalizeWorkflowStatus(status: unknown): WorkflowStatus {
     : "draft";
 }
 
+function normalizeAnalysisStatus(status: unknown): AnalysisStatus {
+  return ANALYSIS_STATUSES.includes(status as AnalysisStatus)
+    ? (status as AnalysisStatus)
+    : "not_started";
+}
+
 function normalizeSurveyStatus(status: unknown): SurveyStatus {
   if (status === "normalized") {
     return "processed_needs_review";
@@ -114,25 +131,14 @@ function normalizePlanningStatus(status: unknown): PlanningStatus {
 }
 
 function normalizeLayoutPlanStatus(status: unknown): LayoutPlanStatus {
-  if (
-    status === "pending" ||
-    status === "ready" ||
-    status === "needs_review" ||
-    status === "approved"
-  ) {
-    return status;
-  }
-
-  return "pending";
+  return LAYOUT_PLAN_STATUSES.includes(status as LayoutPlanStatus)
+    ? (status as LayoutPlanStatus)
+    : "pending";
 }
 
 function normalizeOverflowPolicy(policy: unknown): OverflowPolicy {
-  if (
-    policy === "add_page_if_needed" ||
-    policy === "shrink_text" ||
-    policy === "manual_review"
-  ) {
-    return policy;
+  if (OVERFLOW_POLICIES.includes(policy as OverflowPolicy)) {
+    return policy as OverflowPolicy;
   }
 
   if (
@@ -146,6 +152,60 @@ function normalizeOverflowPolicy(policy: unknown): OverflowPolicy {
   }
 
   return "add_page_if_needed";
+}
+
+function normalizeGraphicType(type: unknown): GraphicType {
+  return GRAPHIC_TYPES.includes(type as GraphicType)
+    ? (type as GraphicType)
+    : "strategy_diagram";
+}
+
+function normalizeGraphicStatus(status: unknown): GraphicStatus {
+  return GRAPHIC_STATUSES.includes(status as GraphicStatus)
+    ? (status as GraphicStatus)
+    : "pending";
+}
+
+function normalizeGraphicFormat(format: unknown): GraphicFormat {
+  return GRAPHIC_FORMATS.includes(format as GraphicFormat)
+    ? (format as GraphicFormat)
+    : "svg";
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function normalizeGraphicSpecs(specs: unknown): GraphicSpec[] {
+  if (!Array.isArray(specs)) {
+    return [];
+  }
+
+  return specs
+    .filter((spec): spec is Record<string, unknown> =>
+      typeof spec === "object" && spec !== null,
+    )
+    .map((spec) => ({
+      id: stringValue(spec.id),
+      type: normalizeGraphicType(spec.type),
+      status: normalizeGraphicStatus(spec.status),
+      title: stringValue(spec.title),
+      description: stringValue(spec.description),
+      inputs: stringArray(spec.inputs),
+      output_path: stringValue(spec.output_path),
+      format: normalizeGraphicFormat(spec.format),
+      layout_role: stringValue(spec.layout_role),
+      requires_human_review:
+        typeof spec.requires_human_review === "boolean"
+          ? spec.requires_human_review
+          : true,
+    }));
 }
 
 function mergeStringRecord(
@@ -349,6 +409,7 @@ export function buildProjectInput(
     analysis: {
       ...base.analysis,
       ...seed?.analysis,
+      status: normalizeAnalysisStatus(seed?.analysis?.status),
       parcel: {
         ...base.analysis.parcel,
         ...seed?.analysis?.parcel,
@@ -372,7 +433,7 @@ export function buildProjectInput(
       ...seed?.graphics,
       strategy_diagrams:
         seed?.graphics?.strategy_diagrams ?? base.graphics.strategy_diagrams,
-      specs: seed?.graphics?.specs ?? base.graphics.specs,
+      specs: normalizeGraphicSpecs(seed?.graphics?.specs ?? base.graphics.specs),
     },
 
     assets: ensureAssetsBlock(seed?.assets),
