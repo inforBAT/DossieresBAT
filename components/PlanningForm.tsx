@@ -2,6 +2,12 @@
 
 import { useState } from "react";
 import { normalizeUploadedFile } from "@/lib/normalizeUploadedFile";
+import { extractTextFromPdfFile } from "@/lib/planningPdfText";
+import {
+  applyPlanningExtractionProposal,
+  extractPlanningRulesFromText,
+  type PlanningExtractionResult,
+} from "@/lib/planningTextExtractor";
 import type {
   AssetsBlock,
   PlanningBlock,
@@ -17,6 +23,9 @@ interface PlanningFormProps {
 
 export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) {
   const [message, setMessage] = useState("");
+  const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
+  const [extractingPdf, setExtractingPdf] = useState(false);
+  const [extractingUrl, setExtractingUrl] = useState(false);
 
   function changePlanning(patch: Partial<PlanningBlock>) {
     onChange({
@@ -39,7 +48,10 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
     });
   }
 
-  function registerFile(file: File | undefined, target: "planning_files" | "cad_files") {
+  function registerFile(
+    file: File | undefined,
+    target: "planning_files" | "cad_files",
+  ) {
     if (!file) {
       return;
     }
@@ -55,9 +67,118 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
           [target]: [...assets[target], normalized],
         },
       });
+      if (target === "planning_files") {
+        setPlanningSourceFile(file);
+      }
       setMessage("Archivo registrado.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Archivo invÃ¡lido.");
+      setMessage(error instanceof Error ? error.message : "Archivo invalido.");
+    }
+  }
+
+  function applyExtractionResult(
+    sourceLabel: string,
+    extraction: PlanningExtractionResult,
+  ) {
+    const applied = applyPlanningExtractionProposal(planning, extraction);
+    changePlanning(applied.planning);
+
+    if (!extraction.hasUsefulData) {
+      setMessage(
+        "No se detectaron reglas claras. Introduce la normativa manualmente o revisa la fuente.",
+      );
+      return;
+    }
+
+    if (applied.appliedFields.length > 0) {
+      setMessage(
+        `Normativa extraida desde ${sourceLabel}. Revisa los valores antes de confirmar.`,
+      );
+      return;
+    }
+
+    if (applied.conflictFields.length > 0 || planning.rules_confirmed_by_user) {
+      setMessage(
+        "Se detectaron valores, pero se han mantenido los existentes. Revisa las notas de normativa.",
+      );
+      return;
+    }
+
+    setMessage("Se analizo la normativa, pero no habia campos nuevos que aplicar.");
+  }
+
+  async function extractFromPdf() {
+    if (!planningSourceFile) {
+      setMessage("Sube un PDF de normativa en esta sesion para poder extraer texto.");
+      return;
+    }
+
+    if (!planningSourceFile.name.toLowerCase().endsWith(".pdf")) {
+      setMessage("El extractor PDF solo esta disponible para archivos .pdf.");
+      return;
+    }
+
+    setExtractingPdf(true);
+    try {
+      const text = await extractTextFromPdfFile(planningSourceFile);
+      if (!text.trim()) {
+        setMessage(
+          "PDF sin texto extraible; introduce valores manualmente o sube una version textual.",
+        );
+        return;
+      }
+
+      const extraction = extractPlanningRulesFromText(text, {
+        sourceType: "pdf",
+        sourceLabel:
+          assets.planning_files[assets.planning_files.length - 1]?.path ??
+          planningSourceFile.name,
+      });
+      applyExtractionResult("PDF", extraction);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo extraer texto del PDF.",
+      );
+    } finally {
+      setExtractingPdf(false);
+    }
+  }
+
+  async function extractFromUrl() {
+    if (!planning.planning_url.trim()) {
+      setMessage("Introduce primero una URL de normativa.");
+      return;
+    }
+
+    setExtractingUrl(true);
+    try {
+      const response = await fetch("/api/planning/extract-from-url", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ url: planning.planning_url }),
+      });
+      const payload = (await response.json()) as {
+        extraction?: PlanningExtractionResult;
+        error?: string;
+      };
+
+      if (!response.ok || !payload.extraction) {
+        throw new Error(payload.error || "No se pudo extraer normativa desde la URL.");
+      }
+
+      applyExtractionResult("URL", payload.extraction);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo extraer normativa desde la URL.",
+      );
+    } finally {
+      setExtractingUrl(false);
     }
   }
 
@@ -159,7 +280,7 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
         </label>
 
         <label>
-          <span className="label">Ocupación</span>
+          <span className="label">Ocupacion</span>
           <input
             className="field"
             value={planning.rules.occupancy}
@@ -170,7 +291,7 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
         </label>
 
         <label>
-          <span className="label">Número máximo de plantas</span>
+          <span className="label">Numero maximo de plantas</span>
           <input
             className="field"
             value={planning.rules.max_floors}
@@ -242,6 +363,25 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
             }
           />
         </label>
+
+        <div className="md:col-span-2 flex flex-wrap gap-3">
+          <button
+            className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            disabled={extractingPdf || !planningSourceFile}
+            onClick={() => void extractFromPdf()}
+          >
+            {extractingPdf ? "Extrayendo PDF..." : "Extraer normativa del PDF"}
+          </button>
+          <button
+            className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            disabled={extractingUrl || !planning.planning_url.trim()}
+            onClick={() => void extractFromUrl()}
+          >
+            {extractingUrl ? "Extrayendo URL..." : "Extraer normativa de URL"}
+          </button>
+        </div>
 
         <label className="flex items-center gap-3 rounded-md border border-line bg-white px-4 py-3 md:col-span-2">
           <input
