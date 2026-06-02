@@ -8,6 +8,7 @@ import {
   extractPlanningRulesFromText,
   type PlanningExtractionResult,
 } from "@/lib/planningTextExtractor";
+import type { PlanningLinkCandidate } from "@/lib/planningUrlCandidates";
 import type {
   AssetsBlock,
   PlanningBlock,
@@ -21,11 +22,19 @@ interface PlanningFormProps {
   onChange: (next: { assets?: AssetsBlock; planning?: PlanningBlock }) => void;
 }
 
+interface ExtractFromUrlResponse {
+  extraction?: PlanningExtractionResult;
+  linkCandidates?: PlanningLinkCandidate[];
+  error?: string;
+}
+
 export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) {
   const [message, setMessage] = useState("");
   const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
   const [extractingPdf, setExtractingPdf] = useState(false);
   const [extractingUrl, setExtractingUrl] = useState(false);
+  const [processingCandidateUrl, setProcessingCandidateUrl] = useState("");
+  const [linkCandidates, setLinkCandidates] = useState<PlanningLinkCandidate[]>([]);
 
   function changePlanning(patch: Partial<PlanningBlock>) {
     onChange({
@@ -134,6 +143,7 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
           assets.planning_files[assets.planning_files.length - 1]?.path ??
           planningSourceFile.name,
       });
+      setLinkCandidates([]);
       applyExtractionResult("PDF", extraction);
     } catch (error) {
       setMessage(
@@ -146,6 +156,26 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
     }
   }
 
+  async function requestUrlExtraction(selectedUrl?: string) {
+    const response = await fetch("/api/planning/extract-from-url", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        url: planning.planning_url,
+        ...(selectedUrl ? { selectedUrl } : {}),
+      }),
+    });
+    const payload = (await response.json()) as ExtractFromUrlResponse;
+
+    if (!response.ok || !payload.extraction) {
+      throw new Error(payload.error || "No se pudo extraer normativa desde la URL.");
+    }
+
+    return payload;
+  }
+
   async function extractFromUrl() {
     if (!planning.planning_url.trim()) {
       setMessage("Introduce primero una URL de normativa.");
@@ -154,23 +184,15 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
 
     setExtractingUrl(true);
     try {
-      const response = await fetch("/api/planning/extract-from-url", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ url: planning.planning_url }),
-      });
-      const payload = (await response.json()) as {
-        extraction?: PlanningExtractionResult;
-        error?: string;
-      };
+      const payload = await requestUrlExtraction();
+      setLinkCandidates(payload.linkCandidates ?? []);
+      applyExtractionResult("URL", payload.extraction!);
 
-      if (!response.ok || !payload.extraction) {
-        throw new Error(payload.error || "No se pudo extraer normativa desde la URL.");
+      if ((payload.linkCandidates?.length ?? 0) > 0) {
+        setMessage(
+          "No se encontraron reglas claras en esta página. Se han encontrado documentos candidatos para revisar.",
+        );
       }
-
-      applyExtractionResult("URL", payload.extraction);
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -179,6 +201,23 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
       );
     } finally {
       setExtractingUrl(false);
+    }
+  }
+
+  async function processLinkCandidate(candidate: PlanningLinkCandidate) {
+    setProcessingCandidateUrl(candidate.url);
+    try {
+      const payload = await requestUrlExtraction(candidate.url);
+      setLinkCandidates(payload.linkCandidates ?? []);
+      applyExtractionResult(candidate.title, payload.extraction!);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo procesar el documento candidato.",
+      );
+    } finally {
+      setProcessingCandidateUrl("");
     }
   }
 
@@ -382,6 +421,40 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
             {extractingUrl ? "Extrayendo URL..." : "Extraer normativa de URL"}
           </button>
         </div>
+
+        {linkCandidates.length > 0 && (
+          <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
+            <p className="mb-3 text-sm font-semibold text-ink">
+              No se encontraron reglas claras en la página inicial. Documentos candidatos:
+            </p>
+            <div className="space-y-3">
+              {linkCandidates.map((candidate) => (
+                <div
+                  className="flex flex-col gap-3 rounded-md border border-line px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
+                  key={candidate.url}
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-ink">{candidate.title}</p>
+                    <p className="text-xs text-ink/60">{candidate.url}</p>
+                    <p className="mt-1 text-xs text-ink/70">
+                      {candidate.sourceType} · {candidate.confidence} · {candidate.reason}
+                    </p>
+                  </div>
+                  <button
+                    className="rounded-md border border-line bg-soft px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                    type="button"
+                    disabled={processingCandidateUrl === candidate.url}
+                    onClick={() => void processLinkCandidate(candidate)}
+                  >
+                    {processingCandidateUrl === candidate.url
+                      ? "Procesando..."
+                      : "Procesar"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <label className="flex items-center gap-3 rounded-md border border-line bg-white px-4 py-3 md:col-span-2">
           <input
