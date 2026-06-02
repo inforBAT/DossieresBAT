@@ -56,6 +56,25 @@ export function formatMeters(value: number | null): string {
   return value === null ? "" : `${formatDecimal(value)} m`;
 }
 
+function preserveMetricField(
+  parsedValue: number | null,
+  currentNumericValue: number | null,
+  currentDisplayValue: string,
+  formatter: (value: number | null) => string,
+): { numericValue: number | null; displayValue: string } {
+  if (parsedValue === null) {
+    return {
+      numericValue: currentNumericValue,
+      displayValue: currentDisplayValue,
+    };
+  }
+
+  return {
+    numericValue: parsedValue,
+    displayValue: formatter(parsedValue),
+  };
+}
+
 function hasPlanningSignals(projectInput: ProjectInputV2): boolean {
   const { planning } = projectInput;
 
@@ -108,6 +127,48 @@ export function normalizePlanningInput(
   const setbackStreet = parseMetricNumber(
     normalized.planning.rules.setback_street_m_display,
   );
+  const buildabilityTotalField = preserveMetricField(
+    buildabilityTotal,
+    normalized.planning.rules.buildability_total_m2,
+    normalized.planning.rules.buildability_total_m2_display,
+    formatSquareMeters,
+  );
+  const buildabilityAboveGroundField = preserveMetricField(
+    buildabilityAboveGround,
+    normalized.planning.rules.buildability_above_ground_m2,
+    normalized.planning.rules.buildability_above_ground_m2_display,
+    formatSquareMeters,
+  );
+  const buildabilityBelowGroundField = preserveMetricField(
+    buildabilityBelowGround,
+    normalized.planning.rules.buildability_below_ground_m2,
+    normalized.planning.rules.buildability_below_ground_m2_display,
+    formatSquareMeters,
+  );
+  const heightEavesField = preserveMetricField(
+    heightEaves,
+    normalized.planning.rules.max_height_eaves_m,
+    normalized.planning.rules.max_height_eaves_m_display,
+    formatMeters,
+  );
+  const heightRidgeField = preserveMetricField(
+    heightRidge,
+    normalized.planning.rules.max_height_ridge_m,
+    normalized.planning.rules.max_height_ridge_m_display,
+    formatMeters,
+  );
+  const setbackBoundaryField = preserveMetricField(
+    setbackBoundary,
+    normalized.planning.rules.setback_boundary_m,
+    normalized.planning.rules.setback_boundary_m_display,
+    formatMeters,
+  );
+  const setbackStreetField = preserveMetricField(
+    setbackStreet,
+    normalized.planning.rules.setback_street_m,
+    normalized.planning.rules.setback_street_m_display,
+    formatMeters,
+  );
 
   const hasPlanningData = hasPlanningSignals(normalized);
   const planningWarnings = normalized.planning.rules_confirmed_by_user
@@ -144,30 +205,29 @@ export function normalizePlanningInput(
         : "not_started",
       rules: {
         ...normalized.planning.rules,
-        buildability_total_m2: buildabilityTotal,
-        buildability_total_m2_display: formatSquareMeters(buildabilityTotal),
-        buildability_above_ground_m2: buildabilityAboveGround,
-        buildability_above_ground_m2_display: formatSquareMeters(
-          buildabilityAboveGround,
-        ),
-        buildability_below_ground_m2: buildabilityBelowGround,
-        buildability_below_ground_m2_display: formatSquareMeters(
-          buildabilityBelowGround,
-        ),
-        max_height_eaves_m: heightEaves,
-        max_height_eaves_m_display: formatMeters(heightEaves),
-        max_height_ridge_m: heightRidge,
-        max_height_ridge_m_display: formatMeters(heightRidge),
-        setback_boundary_m: setbackBoundary,
-        setback_boundary_m_display: formatMeters(setbackBoundary),
-        setback_street_m: setbackStreet,
-        setback_street_m_display: formatMeters(setbackStreet),
+        buildability_total_m2: buildabilityTotalField.numericValue,
+        buildability_total_m2_display: buildabilityTotalField.displayValue,
+        buildability_above_ground_m2: buildabilityAboveGroundField.numericValue,
+        buildability_above_ground_m2_display:
+          buildabilityAboveGroundField.displayValue,
+        buildability_below_ground_m2: buildabilityBelowGroundField.numericValue,
+        buildability_below_ground_m2_display:
+          buildabilityBelowGroundField.displayValue,
+        max_height_eaves_m: heightEavesField.numericValue,
+        max_height_eaves_m_display: heightEavesField.displayValue,
+        max_height_ridge_m: heightRidgeField.numericValue,
+        max_height_ridge_m_display: heightRidgeField.displayValue,
+        setback_boundary_m: setbackBoundaryField.numericValue,
+        setback_boundary_m_display: setbackBoundaryField.displayValue,
+        setback_street_m: setbackStreetField.numericValue,
+        setback_street_m_display: setbackStreetField.displayValue,
       },
     },
     program: {
       ...normalized.program,
       allowed_total_built_m2:
-        buildabilityTotal ?? normalized.program.allowed_total_built_m2,
+        buildabilityTotalField.numericValue ??
+        normalized.program.allowed_total_built_m2,
       allowed_total_built_m2_display:
         buildabilityTotal !== null
           ? formatSquareMeters(buildabilityTotal)
