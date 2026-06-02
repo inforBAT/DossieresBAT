@@ -70,6 +70,12 @@ function surveyReviewed(status: ProjectInputV2["survey"]["status"]): boolean {
   return status === "reviewed" || status === "confirmed";
 }
 
+function surveyNormalizationPending(
+  status: ProjectInputV2["survey"]["status"],
+): boolean {
+  return status === "pending_normalization";
+}
+
 function hasManualPlanningRules(projectInput: ProjectInputV2): boolean {
   const { planning } = projectInput;
   const { rules } = planning;
@@ -205,7 +211,7 @@ export function updateRequirementsAndWorkflow(
     );
   }
 
-  if (hasSurvey && !surveyReviewed(projectInput.survey.status)) {
+  if (hasSurvey && surveyNormalizationPending(projectInput.survey.status)) {
     warnings.push("survey.status_pending_review");
   }
 

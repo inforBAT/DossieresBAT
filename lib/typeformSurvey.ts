@@ -284,6 +284,21 @@ function mergeSummary(
   };
 }
 
+function hasUsefulSurveyData(
+  summary: SurveySummary,
+  desiredTotalBuiltM2: number | null,
+): boolean {
+  return (
+    summary.use_type.trim().length > 0 ||
+    typeof summary.household_size === "number" ||
+    summary.main_priorities.length > 0 ||
+    summary.day_area_bullets.length > 0 ||
+    summary.night_area_bullets.length > 0 ||
+    summary.extra_uses.length > 0 ||
+    typeof desiredTotalBuiltM2 === "number"
+  );
+}
+
 export async function readTypeformWorkbook(
   file: File,
 ): Promise<TypeformWorkbookData> {
@@ -441,6 +456,17 @@ export function normalizeTypeformSurvey(
     desiredSurface !== normalized.program.desired_total_built_m2 ||
     desiredSurfaceDisplay !== normalized.program.desired_total_built_m2_display ||
     JSON.stringify(nextSummary) !== JSON.stringify(normalized.survey.summary);
+  const extractedUsefulSurveyData = hasUsefulSurveyData(
+    nextSummary,
+    desiredSurface ?? normalized.program.desired_total_built_m2,
+  );
+  const nextSurveyStatus =
+    normalized.survey.status === "reviewed" ||
+    normalized.survey.status === "confirmed"
+      ? normalized.survey.status
+      : extractedUsefulSurveyData
+        ? "processed_needs_review"
+        : normalized.survey.status;
 
   return {
     ...normalized,
@@ -470,14 +496,19 @@ export function normalizeTypeformSurvey(
     },
     survey: {
       ...normalized.survey,
-      status: normalizedSomething ? "processed_needs_review" : normalized.survey.status,
+      status: nextSurveyStatus,
       summary: nextSummary,
     },
     workflow: {
       ...normalized.workflow,
       warnings: uniqueStrings([
-        ...normalized.workflow.warnings,
-        ...(normalizedSomething ? ["survey.status_pending_review"] : []),
+        ...normalized.workflow.warnings.filter(
+          (warning) => warning !== "survey.status_pending_review",
+        ),
+        ...(normalized.survey.status === "pending_normalization" &&
+        !extractedUsefulSurveyData
+          ? ["survey.status_pending_review"]
+          : []),
       ]),
     },
   };
