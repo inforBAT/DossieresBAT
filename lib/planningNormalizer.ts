@@ -62,6 +62,15 @@ function preserveMetricField(
   currentDisplayValue: string,
   formatter: (value: number | null) => string,
 ): { numericValue: number | null; displayValue: string } {
+  const trimmedDisplayValue = currentDisplayValue.trim();
+
+  if (!trimmedDisplayValue) {
+    return {
+      numericValue: currentNumericValue,
+      displayValue: formatter(currentNumericValue),
+    };
+  }
+
   if (parsedValue === null) {
     return {
       numericValue: currentNumericValue,
@@ -181,14 +190,14 @@ export function normalizePlanningInput(
       ]);
 
   const allowedTotalsLines = [
-    buildabilityAboveGround !== null
-      ? `Sobre rasante: ${formatSquareMeters(buildabilityAboveGround)}`
+    buildabilityAboveGroundField.numericValue !== null
+      ? `Sobre rasante: ${formatSquareMeters(buildabilityAboveGroundField.numericValue)}`
       : "",
-    buildabilityBelowGround !== null
-      ? `Bajo rasante: ${formatSquareMeters(buildabilityBelowGround)}`
+    buildabilityBelowGroundField.numericValue !== null
+      ? `Bajo rasante: ${formatSquareMeters(buildabilityBelowGroundField.numericValue)}`
       : "",
-    buildabilityTotal !== null
-      ? `Total: ${formatSquareMeters(buildabilityTotal)}`
+    buildabilityTotalField.numericValue !== null
+      ? `Total: ${formatSquareMeters(buildabilityTotalField.numericValue)}`
       : "",
   ]
     .filter(Boolean)
@@ -229,8 +238,8 @@ export function normalizePlanningInput(
         buildabilityTotalField.numericValue ??
         normalized.program.allowed_total_built_m2,
       allowed_total_built_m2_display:
-        buildabilityTotal !== null
-          ? formatSquareMeters(buildabilityTotal)
+        buildabilityTotalField.numericValue !== null
+          ? formatSquareMeters(buildabilityTotalField.numericValue)
           : normalized.program.allowed_total_built_m2_display,
       allowed_totals_lines:
         allowedTotalsLines || normalized.program.allowed_totals_lines,
