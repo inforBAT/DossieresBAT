@@ -83,6 +83,22 @@ function buildTitleSegment(title: string, municipality: string): string {
   return words.join("_") || "DOSSIER";
 }
 
+function isPlaceholderProjectId(id: string): boolean {
+  const normalized = normalizeIdSegment(id);
+
+  if (!normalized) {
+    return true;
+  }
+
+  const segments = normalized.split("_").filter(Boolean);
+
+  return (
+    segments.includes("MUNICIPIO") ||
+    segments.includes("DOSSIER") ||
+    normalized.endsWith("_SIN_FECHA")
+  );
+}
+
 function normalizeWorkflowStatus(status: unknown): WorkflowStatus {
   return WORKFLOW_STATUSES.includes(status as WorkflowStatus)
     ? (status as WorkflowStatus)
@@ -243,10 +259,6 @@ function mergeStringArrayRecord(
 }
 
 export function buildProjectId(input: ProjectInputV2): string {
-  if (input.project.id && input.project.id.trim()) {
-    return normalizeIdSegment(input.project.id);
-  }
-
   const municipality = normalizeIdSegment(input.site.municipality) || "MUNICIPIO";
   const titleSegment = buildTitleSegment(
     input.project.title,
@@ -254,7 +266,14 @@ export function buildProjectId(input: ProjectInputV2): string {
   );
   const dateSegment = compactDate(input.project.date);
 
-  return `${municipality}_${titleSegment}_${dateSegment}`;
+  const generatedId = `${municipality}_${titleSegment}_${dateSegment}`;
+  const existingId = normalizeIdSegment(input.project.id);
+
+  if (!existingId || isPlaceholderProjectId(existingId)) {
+    return generatedId;
+  }
+
+  return existingId;
 }
 
 export function emptyAssets(): AssetsBlock {
