@@ -164,7 +164,14 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
       },
       body: JSON.stringify({
         url: planning.planning_url,
-        ...(selectedUrl ? { selectedUrl } : {}),
+        ...(selectedUrl
+          ? {
+              selectedUrl,
+              selectedSourceType: linkCandidates.find(
+                (candidate) => candidate.url === selectedUrl,
+              )?.sourceType,
+            }
+          : {}),
       }),
     });
     const payload = (await response.json()) as ExtractFromUrlResponse;

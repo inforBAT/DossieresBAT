@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 interface ExtractFromUrlRequest {
   url?: string;
   selectedUrl?: string;
+  selectedSourceType?: "pdf" | "html";
 }
 
 function htmlToText(html: string): string {
@@ -74,10 +75,27 @@ async function extractFromHtmlOrTextUrl(targetUrl: string) {
   };
 }
 
+function shouldFetchAsPdf(
+  targetUrl: string,
+  selectedSourceType?: "pdf" | "html",
+): boolean {
+  if (selectedSourceType === "pdf") {
+    return true;
+  }
+
+  try {
+    const parsedUrl = new URL(targetUrl);
+    return parsedUrl.pathname.toLowerCase().endsWith(".pdf");
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
   const body = (await request.json()) as ExtractFromUrlRequest;
   const baseUrl = body.url?.trim();
   const selectedUrl = body.selectedUrl?.trim();
+  const selectedSourceType = body.selectedSourceType;
   const targetUrl = selectedUrl || baseUrl;
 
   if (!targetUrl) {
@@ -85,7 +103,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = targetUrl.toLowerCase().endsWith(".pdf")
+    const result = shouldFetchAsPdf(targetUrl, selectedSourceType)
       ? await extractFromPdfUrl(targetUrl)
       : await extractFromHtmlOrTextUrl(targetUrl);
 
