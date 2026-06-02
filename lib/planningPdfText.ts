@@ -4,6 +4,7 @@ async function extractTextFromPdfData(
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({
     data,
+    ...(typeof window !== "undefined" ? { disableWorker: true } : {}),
   } as Parameters<typeof pdfjs.getDocument>[0]).promise;
 
   const pages: string[] = [];

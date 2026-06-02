@@ -9,6 +9,8 @@ const DEFAULT_ALLOWED_CONTENT_TYPES = [
   "application/xhtml+xml",
   "application/json",
 ];
+const DEFAULT_SIZE_EXCEEDED_MESSAGE =
+  "La respuesta es demasiado grande para procesarse automáticamente.";
 
 export interface SafeFetchResult {
   body: Uint8Array;
@@ -126,6 +128,7 @@ function ensureAllowedContentType(
 async function readLimitedBytes(
   response: Response,
   maxBytes: number,
+  sizeExceededMessage: string,
 ): Promise<Uint8Array> {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -144,9 +147,7 @@ async function readLimitedBytes(
     totalBytes += value.byteLength;
     if (totalBytes > maxBytes) {
       await reader.cancel();
-      throw new Error(
-        "La respuesta es demasiado grande para procesarse automáticamente.",
-      );
+      throw new Error(sizeExceededMessage);
     }
 
     chunks.push(value);
@@ -168,10 +169,13 @@ export async function fetchContentFromPublicUrl(
     timeoutMs?: number;
     maxBytes?: number;
     allowedContentTypes?: string[];
+    sizeExceededMessage?: string;
   } = {},
 ): Promise<SafeFetchResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const sizeExceededMessage =
+    options.sizeExceededMessage ?? DEFAULT_SIZE_EXCEEDED_MESSAGE;
   const allowedContentTypes =
     options.allowedContentTypes ?? DEFAULT_ALLOWED_CONTENT_TYPES;
   const url = await assertSafePublicHttpUrl(rawUrl);
@@ -205,13 +209,11 @@ export async function fetchContentFromPublicUrl(
 
     const contentLength = response.headers.get("content-length");
     if (contentLength && Number(contentLength) > maxBytes) {
-      throw new Error(
-        "La respuesta es demasiado grande para procesarse automáticamente.",
-      );
+      throw new Error(sizeExceededMessage);
     }
 
     return {
-      body: await readLimitedBytes(response, maxBytes),
+      body: await readLimitedBytes(response, maxBytes, sizeExceededMessage),
       contentType,
       url,
     };
@@ -232,6 +234,7 @@ export async function fetchTextFromPublicUrl(
     timeoutMs?: number;
     maxBytes?: number;
     allowedContentTypes?: string[];
+    sizeExceededMessage?: string;
   } = {},
 ): Promise<{ text: string; contentType: string; url: URL }> {
   const result = await fetchContentFromPublicUrl(rawUrl, options);
