@@ -153,15 +153,8 @@ export default function Home() {
       />
 
       <SurveyForm
-        assets={projectInput.assets}
-        survey={projectInput.survey}
-        onChange={(next) =>
-          commit((current) => ({
-            ...current,
-            assets: next.assets,
-            survey: next.survey,
-          }))
-        }
+        projectInput={projectInput}
+        onChange={(next) => commit(() => next)}
       />
 
       <PlanningForm
