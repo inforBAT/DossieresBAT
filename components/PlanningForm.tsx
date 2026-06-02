@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import { normalizeUploadedFile } from "@/lib/normalizeUploadedFile";
-import { extractTextFromPdfFile } from "@/lib/planningPdfText";
 import {
   applyPlanningExtractionProposal,
-  extractPlanningRulesFromText,
   type PlanningExtractionResult,
 } from "@/lib/planningTextExtractor";
 import type { PlanningLinkCandidate } from "@/lib/planningUrlCandidates";
@@ -25,6 +23,11 @@ interface PlanningFormProps {
 interface ExtractFromUrlResponse {
   extraction?: PlanningExtractionResult;
   linkCandidates?: PlanningLinkCandidate[];
+  error?: string;
+}
+
+interface ExtractFromPdfResponse {
+  extraction?: PlanningExtractionResult;
   error?: string;
 }
 
@@ -129,22 +132,26 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
 
     setExtractingPdf(true);
     try {
-      const text = await extractTextFromPdfFile(planningSourceFile);
-      if (!text.trim()) {
-        setMessage(
-          "PDF sin texto extraible; introduce valores manualmente o sube una version textual.",
-        );
-        return;
+      const formData = new FormData();
+      formData.set("file", planningSourceFile);
+      formData.set(
+        "sourceLabel",
+        assets.planning_files[assets.planning_files.length - 1]?.path ??
+          planningSourceFile.name,
+      );
+
+      const response = await fetch("/api/planning/extract-from-pdf", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json()) as ExtractFromPdfResponse;
+
+      if (!response.ok || !payload.extraction) {
+        throw new Error(payload.error || "No se pudo extraer texto del PDF.");
       }
 
-      const extraction = extractPlanningRulesFromText(text, {
-        sourceType: "pdf",
-        sourceLabel:
-          assets.planning_files[assets.planning_files.length - 1]?.path ??
-          planningSourceFile.name,
-      });
       setLinkCandidates([]);
-      applyExtractionResult("PDF", extraction);
+      applyExtractionResult("PDF", payload.extraction);
     } catch (error) {
       setMessage(
         error instanceof Error
