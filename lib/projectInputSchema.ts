@@ -87,6 +87,8 @@ export type PlanningStatus =
   | "not_started"
   | "needs_user_input"
   | "needs_human_review"
+  | "processed_needs_review"
+  | "reviewed"
   | "confirmed";
 
 export interface ProjectBlock {

@@ -138,6 +138,8 @@ function normalizePlanningStatus(status: unknown): PlanningStatus {
     status === "not_started" ||
     status === "needs_user_input" ||
     status === "needs_human_review" ||
+    status === "processed_needs_review" ||
+    status === "reviewed" ||
     status === "confirmed"
   ) {
     return status;
