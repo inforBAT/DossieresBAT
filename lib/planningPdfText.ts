@@ -1,10 +1,11 @@
+import "server-only";
+
 async function extractTextFromPdfData(
   data: ArrayBuffer | Uint8Array,
 ): Promise<string> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({
     data,
-    ...(typeof window !== "undefined" ? { disableWorker: true } : {}),
   } as Parameters<typeof pdfjs.getDocument>[0]).promise;
 
   const pages: string[] = [];
@@ -25,11 +26,6 @@ async function extractTextFromPdfData(
 
   return pages.join("\n");
 }
-
-export async function extractTextFromPdfFile(file: File): Promise<string> {
-  return extractTextFromPdfData(await file.arrayBuffer());
-}
-
 export async function extractTextFromPdfBytes(
   data: ArrayBuffer | Uint8Array,
 ): Promise<string> {
