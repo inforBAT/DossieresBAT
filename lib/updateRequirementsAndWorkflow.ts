@@ -70,6 +70,31 @@ function surveyReviewed(status: ProjectInputV2["survey"]["status"]): boolean {
   return status === "reviewed" || status === "confirmed";
 }
 
+function hasManualPlanningRules(projectInput: ProjectInputV2): boolean {
+  const { planning } = projectInput;
+  const { rules } = planning;
+
+  return (
+    hasText(planning.review_notes) ||
+    hasText(rules.buildability_total_m2_display) ||
+    hasText(rules.buildability_above_ground_m2_display) ||
+    hasText(rules.buildability_below_ground_m2_display) ||
+    hasText(rules.occupancy) ||
+    hasText(rules.max_floors) ||
+    hasText(rules.max_height_eaves_m_display) ||
+    hasText(rules.max_height_ridge_m_display) ||
+    hasText(rules.setback_boundary_m_display) ||
+    hasText(rules.setback_street_m_display) ||
+    typeof rules.buildability_total_m2 === "number" ||
+    typeof rules.buildability_above_ground_m2 === "number" ||
+    typeof rules.buildability_below_ground_m2 === "number" ||
+    typeof rules.max_height_eaves_m === "number" ||
+    typeof rules.max_height_ridge_m === "number" ||
+    typeof rules.setback_boundary_m === "number" ||
+    typeof rules.setback_street_m === "number"
+  );
+}
+
 export function updateRequirementsAndWorkflow(
   projectInput: ProjectInputV2,
   updatedAt = projectInput.workflow.updated_at,
@@ -112,6 +137,7 @@ export function updateRequirementsAndWorkflow(
     hasText(projectInput.planning.planning_document) ||
     hasText(projectInput.planning.zone) ||
     hasText(projectInput.planning.ordinance) ||
+    hasManualPlanningRules(projectInput) ||
     Boolean(firstPlanningFile);
 
   if (!hasSurvey) {
