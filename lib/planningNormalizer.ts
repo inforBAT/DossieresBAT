@@ -32,7 +32,8 @@ export function parseMetricNumber(value: string): number | null {
   }
 
   const normalized = trimmed
-    .replace(/m²|m2|mts2|mts|metros cuadrados|metros?/gi, "")
+    .replace(/metros cuadrados|m²|m2|mts2/gi, "")
+    .replace(/\b(?:metros?|mts|m)\b/gi, "")
     .replace(/\s+/g, "")
     .replace(/\.(?=\d{3}(?:[,.]|$))/g, "")
     .replace(",", ".");
