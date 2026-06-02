@@ -60,6 +60,9 @@ export function ReviewSubmit({
   );
 
   const webhookUrl = process.env.NEXT_PUBLIC_DOSSIERES_INTAKE_WEBHOOK_URL;
+  const analysisPending =
+    projectInput.analysis.status === "not_started" ||
+    projectInput.indesign.layout_plan.status === "pending";
 
   function runAnalysis() {
     setCopyMessage("");
@@ -90,13 +93,19 @@ export function ReviewSubmit({
 
   async function sendToMake() {
     setAnalysisMessage("");
+    setSubmitMessage("");
+
+    if (analysisPending) {
+      setSubmitMessage("Ejecuta el análisis antes de enviar a Make.");
+      return;
+    }
+
     if (!webhookUrl) {
       setSubmitMessage("Webhook no configurado.");
       return;
     }
 
     setSubmitting(true);
-    setSubmitMessage("");
     try {
       const response = await fetch(webhookUrl, {
         method: "POST",
@@ -248,6 +257,14 @@ export function ReviewSubmit({
               </div>
             </div>
           </div>
+
+          {analysisPending && (
+            <div className="rounded-md border border-brick/20 bg-brick/5 px-4 py-4 text-sm text-ink">
+              Ejecuta el análisis antes de enviar a Make para evitar un
+              expediente con `analysis`, `graphics` o `layout_plan` sin
+              preparar.
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-3">
             <button
