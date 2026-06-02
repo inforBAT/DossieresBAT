@@ -1,8 +1,16 @@
 import { NextResponse } from "next/server";
+import { extractTextFromPdfBytes } from "@/lib/planningPdfText";
 import { extractPlanningRulesFromText } from "@/lib/planningTextExtractor";
-import { fetchTextFromPublicUrl } from "@/lib/safeUrlFetch";
+import { extractPlanningLinkCandidatesFromHtml } from "@/lib/planningUrlCandidates";
+import { fetchContentFromPublicUrl, fetchTextFromPublicUrl } from "@/lib/safeUrlFetch";
 
 export const runtime = "nodejs";
+
+interface ExtractFromUrlRequest {
+  url?: string;
+  selectedUrl?: string;
+  selectedSourceType?: "pdf" | "html";
+}
 
 function htmlToText(html: string): string {
   return html
@@ -21,33 +29,85 @@ function htmlToText(html: string): string {
     .trim();
 }
 
+function shouldSuggestCandidates(confidence: string, hasUsefulData: boolean): boolean {
+  return confidence === "low" || !hasUsefulData;
+}
+
+async function extractFromPdfUrl(targetUrl: string) {
+  const fetched = await fetchContentFromPublicUrl(targetUrl, {
+    allowedContentTypes: ["application/pdf"],
+  });
+  const extractedText = await extractTextFromPdfBytes(fetched.body);
+
+  return {
+    extraction: extractPlanningRulesFromText(extractedText, {
+      sourceType: "pdf",
+      sourceLabel: targetUrl,
+    }),
+    linkCandidates: [],
+  };
+}
+
+async function extractFromHtmlOrTextUrl(targetUrl: string) {
+  const fetched = await fetchTextFromPublicUrl(targetUrl);
+  const extractedText = fetched.contentType.includes("html")
+    ? htmlToText(fetched.text)
+    : fetched.text.trim();
+
+  if (!extractedText) {
+    throw new Error("La URL no devolvió texto utilizable.");
+  }
+
+  const extraction = extractPlanningRulesFromText(extractedText, {
+    sourceType: "url",
+    sourceLabel: targetUrl,
+  });
+
+  const linkCandidates =
+    fetched.contentType.includes("html") &&
+    shouldSuggestCandidates(extraction.confidence, extraction.hasUsefulData)
+      ? extractPlanningLinkCandidatesFromHtml(fetched.text, fetched.url)
+      : [];
+
+  return {
+    extraction,
+    linkCandidates,
+  };
+}
+
+function shouldFetchAsPdf(
+  targetUrl: string,
+  selectedSourceType?: "pdf" | "html",
+): boolean {
+  if (selectedSourceType === "pdf") {
+    return true;
+  }
+
+  try {
+    const parsedUrl = new URL(targetUrl);
+    return parsedUrl.pathname.toLowerCase().endsWith(".pdf");
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
-  const body = (await request.json()) as { url?: string };
-  const targetUrl = body.url?.trim();
+  const body = (await request.json()) as ExtractFromUrlRequest;
+  const baseUrl = body.url?.trim();
+  const selectedUrl = body.selectedUrl?.trim();
+  const selectedSourceType = body.selectedSourceType;
+  const targetUrl = selectedUrl || baseUrl;
 
   if (!targetUrl) {
     return NextResponse.json({ error: "URL no válida." }, { status: 400 });
   }
 
   try {
-    const fetched = await fetchTextFromPublicUrl(targetUrl);
-    const extractedText = fetched.contentType.includes("html")
-      ? htmlToText(fetched.text)
-      : fetched.text.trim();
+    const result = shouldFetchAsPdf(targetUrl, selectedSourceType)
+      ? await extractFromPdfUrl(targetUrl)
+      : await extractFromHtmlOrTextUrl(targetUrl);
 
-    if (!extractedText) {
-      return NextResponse.json(
-        { error: "La URL no devolvió texto utilizable." },
-        { status: 400 },
-      );
-    }
-
-    return NextResponse.json({
-      extraction: extractPlanningRulesFromText(extractedText, {
-        sourceType: "url",
-        sourceLabel: targetUrl,
-      }),
-    });
+    return NextResponse.json(result);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "No se pudo procesar la URL.";

@@ -3,12 +3,18 @@ import net from "node:net";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 2_000_000;
-const ALLOWED_CONTENT_TYPES = [
+const DEFAULT_ALLOWED_CONTENT_TYPES = [
   "text/html",
   "text/plain",
   "application/xhtml+xml",
   "application/json",
 ];
+
+export interface SafeFetchResult {
+  body: Uint8Array;
+  contentType: string;
+  url: URL;
+}
 
 function ipToIpv4Number(ip: string): number {
   return ip
@@ -103,29 +109,31 @@ export async function assertSafePublicHttpUrl(rawUrl: string): Promise<URL> {
   return parsedUrl;
 }
 
-function ensureAllowedContentType(contentTypeHeader: string): void {
+function ensureAllowedContentType(
+  contentTypeHeader: string,
+  allowedContentTypes: string[],
+): void {
   const contentType = contentTypeHeader.toLowerCase();
   if (
-    !ALLOWED_CONTENT_TYPES.some((allowedType) =>
+    !allowedContentTypes.some((allowedType) =>
       contentType.includes(allowedType),
     )
   ) {
-    throw new Error("El contenido remoto no es un texto o HTML soportado.");
+    throw new Error("El contenido remoto no es un tipo soportado.");
   }
 }
 
-async function readLimitedText(
+async function readLimitedBytes(
   response: Response,
   maxBytes: number,
-): Promise<string> {
+): Promise<Uint8Array> {
   const reader = response.body?.getReader();
   if (!reader) {
-    return response.text();
+    return new Uint8Array(await response.arrayBuffer());
   }
 
-  const decoder = new TextDecoder();
+  const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-  let text = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -141,22 +149,31 @@ async function readLimitedText(
       );
     }
 
-    text += decoder.decode(value, { stream: true });
+    chunks.push(value);
   }
 
-  text += decoder.decode();
-  return text;
+  const result = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return result;
 }
 
-export async function fetchTextFromPublicUrl(
+export async function fetchContentFromPublicUrl(
   rawUrl: string,
   options: {
     timeoutMs?: number;
     maxBytes?: number;
+    allowedContentTypes?: string[];
   } = {},
-): Promise<{ text: string; contentType: string; url: URL }> {
+): Promise<SafeFetchResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const allowedContentTypes =
+    options.allowedContentTypes ?? DEFAULT_ALLOWED_CONTENT_TYPES;
   const url = await assertSafePublicHttpUrl(rawUrl);
 
   const controller = new AbortController();
@@ -166,7 +183,7 @@ export async function fetchTextFromPublicUrl(
     const response = await fetch(url, {
       headers: {
         "user-agent": "DossieresBAT Planning Extractor/1.0",
-        accept: "text/html,text/plain,application/xhtml+xml,application/json",
+        accept: allowedContentTypes.join(","),
       },
       cache: "no-store",
       redirect: "manual",
@@ -184,7 +201,7 @@ export async function fetchTextFromPublicUrl(
     }
 
     const contentType = response.headers.get("content-type") ?? "";
-    ensureAllowedContentType(contentType);
+    ensureAllowedContentType(contentType, allowedContentTypes);
 
     const contentLength = response.headers.get("content-length");
     if (contentLength && Number(contentLength) > maxBytes) {
@@ -194,7 +211,7 @@ export async function fetchTextFromPublicUrl(
     }
 
     return {
-      text: await readLimitedText(response, maxBytes),
+      body: await readLimitedBytes(response, maxBytes),
       contentType,
       url,
     };
@@ -207,4 +224,20 @@ export async function fetchTextFromPublicUrl(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function fetchTextFromPublicUrl(
+  rawUrl: string,
+  options: {
+    timeoutMs?: number;
+    maxBytes?: number;
+    allowedContentTypes?: string[];
+  } = {},
+): Promise<{ text: string; contentType: string; url: URL }> {
+  const result = await fetchContentFromPublicUrl(rawUrl, options);
+  return {
+    text: new TextDecoder().decode(result.body),
+    contentType: result.contentType,
+    url: result.url,
+  };
 }
