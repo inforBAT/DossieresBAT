@@ -8,10 +8,15 @@ import { ReviewSubmit } from "@/components/ReviewSubmit";
 import { SiteForm } from "@/components/SiteForm";
 import { SurveyForm } from "@/components/SurveyForm";
 import { buildProjectInput } from "@/lib/buildProjectInput";
+import { runAnalysisEngine } from "@/lib/analysisEngine";
 import type { ProjectInputV2 } from "@/lib/projectInputSchema";
 import { updateRequirementsAndWorkflow } from "@/lib/updateRequirementsAndWorkflow";
 
 const STORAGE_KEY = "dossieres.project_input_v2";
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
+}
 
 function normalizeInput(
   seed?: Partial<ProjectInputV2>,
@@ -55,6 +60,33 @@ export default function Home() {
     const next = normalizeInput();
     window.localStorage.removeItem(STORAGE_KEY);
     setProjectInput(next);
+  }
+
+  function handleRunAnalysis() {
+    setProjectInput((current) => {
+      const analyzed = runAnalysisEngine(current);
+      const refreshed = updateRequirementsAndWorkflow(
+        analyzed,
+        new Date().toISOString(),
+      );
+
+      return {
+        ...refreshed,
+        workflow: {
+          ...refreshed.workflow,
+          can_generate_pdf: current.workflow.can_generate_pdf,
+          current_step: analyzed.workflow.current_step,
+          next_action: analyzed.workflow.next_action,
+          warnings: uniqueStrings([
+            ...refreshed.workflow.warnings,
+            ...analyzed.workflow.warnings,
+          ]),
+        },
+        analysis: analyzed.analysis,
+        graphics: analyzed.graphics,
+        indesign: analyzed.indesign,
+      };
+    });
   }
 
   return (
@@ -144,7 +176,11 @@ export default function Home() {
         }
       />
 
-      <ReviewSubmit projectInput={projectInput} onReset={resetProject} />
+      <ReviewSubmit
+        projectInput={projectInput}
+        onReset={resetProject}
+        onRunAnalysis={handleRunAnalysis}
+      />
     </main>
   );
 }

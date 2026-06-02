@@ -11,6 +11,7 @@ import {
 interface ReviewSubmitProps {
   projectInput: ProjectInputV2;
   onReset: () => void;
+  onRunAnalysis: () => void;
 }
 
 function getValue(projectInput: ProjectInputV2, path: string): string {
@@ -43,7 +44,12 @@ function copyWithTextareaFallback(value: string): boolean {
   }
 }
 
-export function ReviewSubmit({ projectInput, onReset }: ReviewSubmitProps) {
+export function ReviewSubmit({
+  projectInput,
+  onReset,
+  onRunAnalysis,
+}: ReviewSubmitProps) {
+  const [analysisMessage, setAnalysisMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [submitMessage, setSubmitMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -55,7 +61,15 @@ export function ReviewSubmit({ projectInput, onReset }: ReviewSubmitProps) {
 
   const webhookUrl = process.env.NEXT_PUBLIC_DOSSIERES_INTAKE_WEBHOOK_URL;
 
+  function runAnalysis() {
+    setCopyMessage("");
+    setSubmitMessage("");
+    onRunAnalysis();
+    setAnalysisMessage("Análisis ejecutado.");
+  }
+
   async function copyJson() {
+    setAnalysisMessage("");
     setCopyMessage("");
     try {
       if (!navigator.clipboard?.writeText) {
@@ -75,6 +89,7 @@ export function ReviewSubmit({ projectInput, onReset }: ReviewSubmitProps) {
   }
 
   async function sendToMake() {
+    setAnalysisMessage("");
     if (!webhookUrl) {
       setSubmitMessage("Webhook no configurado.");
       return;
@@ -205,7 +220,43 @@ export function ReviewSubmit({ projectInput, onReset }: ReviewSubmitProps) {
             </div>
           </div>
 
+          <div className="rounded-md border border-line bg-white px-4 py-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-ink/55">analysis.status</p>
+                <p className="truncate font-semibold text-ink">
+                  {projectInput.analysis.status}
+                </p>
+              </div>
+              <div>
+                <p className="text-ink/55">graphics.specs</p>
+                <p className="font-semibold text-ink">
+                  {projectInput.graphics.specs.length}
+                </p>
+              </div>
+              <div>
+                <p className="text-ink/55">layout_plan.status</p>
+                <p className="truncate font-semibold text-ink">
+                  {projectInput.indesign.layout_plan.status}
+                </p>
+              </div>
+              <div>
+                <p className="text-ink/55">current_step</p>
+                <p className="truncate font-semibold text-ink">
+                  {projectInput.workflow.current_step}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-3">
+            <button
+              className="button-secondary"
+              type="button"
+              onClick={runAnalysis}
+            >
+              Ejecutar análisis
+            </button>
             <button className="button-secondary" type="button" onClick={copyJson}>
               Copiar JSON
             </button>
@@ -222,9 +273,9 @@ export function ReviewSubmit({ projectInput, onReset }: ReviewSubmitProps) {
             </button>
           </div>
 
-          {(copyMessage || submitMessage) && (
+          {(analysisMessage || copyMessage || submitMessage) && (
             <p className="text-sm font-semibold text-ink">
-              {copyMessage || submitMessage}
+              {analysisMessage || copyMessage || submitMessage}
             </p>
           )}
         </div>
