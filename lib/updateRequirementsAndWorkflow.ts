@@ -202,13 +202,13 @@ export function updateRequirementsAndWorkflow(
 
   const planningStatus = hasPlanning
     ? projectInput.planning.rules_confirmed_by_user
-      ? "confirmed"
-      : "needs_human_review"
+      ? "reviewed"
+      : "processed_needs_review"
     : "not_started";
 
   const canGeneratePdf =
     missing.length === 0 &&
-    planningStatus === "confirmed" &&
+    planningStatus === "reviewed" &&
     surveyReviewed(projectInput.survey.status);
 
   const humanReviewRequired =

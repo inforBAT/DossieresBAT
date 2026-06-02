@@ -9,6 +9,7 @@ import { SiteForm } from "@/components/SiteForm";
 import { SurveyForm } from "@/components/SurveyForm";
 import { buildProjectInput } from "@/lib/buildProjectInput";
 import { runAnalysisEngine } from "@/lib/analysisEngine";
+import { normalizePlanningInput } from "@/lib/planningNormalizer";
 import type { ProjectInputV2 } from "@/lib/projectInputSchema";
 import { updateRequirementsAndWorkflow } from "@/lib/updateRequirementsAndWorkflow";
 
@@ -23,7 +24,7 @@ function normalizeInput(
   options: { touch?: boolean } = {},
 ): ProjectInputV2 {
   return updateRequirementsAndWorkflow(
-    buildProjectInput(seed),
+    normalizePlanningInput(buildProjectInput(seed)),
     options.touch ? new Date().toISOString() : undefined,
   );
 }

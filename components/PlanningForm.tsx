@@ -5,6 +5,7 @@ import { normalizeUploadedFile } from "@/lib/normalizeUploadedFile";
 import type {
   AssetsBlock,
   PlanningBlock,
+  PlanningRules,
   UploadedAsset,
 } from "@/lib/projectInputSchema";
 
@@ -22,8 +23,18 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
       planning: {
         ...planning,
         ...patch,
-        status: "needs_human_review",
-        rules_confirmed_by_user: false,
+      },
+    });
+  }
+
+  function changeRules(patch: Partial<PlanningRules>) {
+    onChange({
+      planning: {
+        ...planning,
+        rules: {
+          ...planning.rules,
+          ...patch,
+        },
       },
     });
   }
@@ -43,15 +54,10 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
           ...assets,
           [target]: [...assets[target], normalized],
         },
-        planning: {
-          ...planning,
-          status: "needs_human_review",
-          rules_confirmed_by_user: false,
-        },
       });
       setMessage("Archivo registrado.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Archivo inválido.");
+      setMessage(error instanceof Error ? error.message : "Archivo invÃ¡lido.");
     }
   }
 
@@ -113,6 +119,119 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
           />
         </label>
 
+        <label>
+          <span className="label">Edificabilidad total</span>
+          <input
+            className="field"
+            value={planning.rules.buildability_total_m2_display}
+            onChange={(event) =>
+              changeRules({
+                buildability_total_m2_display: event.target.value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Edificabilidad sobre rasante</span>
+          <input
+            className="field"
+            value={planning.rules.buildability_above_ground_m2_display}
+            onChange={(event) =>
+              changeRules({
+                buildability_above_ground_m2_display: event.target.value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Edificabilidad bajo rasante</span>
+          <input
+            className="field"
+            value={planning.rules.buildability_below_ground_m2_display}
+            onChange={(event) =>
+              changeRules({
+                buildability_below_ground_m2_display: event.target.value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Ocupación</span>
+          <input
+            className="field"
+            value={planning.rules.occupancy}
+            onChange={(event) =>
+              changeRules({ occupancy: event.target.value })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Número máximo de plantas</span>
+          <input
+            className="field"
+            value={planning.rules.max_floors}
+            onChange={(event) =>
+              changeRules({ max_floors: event.target.value })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Altura al alero</span>
+          <input
+            className="field"
+            value={planning.rules.max_height_eaves_m_display}
+            onChange={(event) =>
+              changeRules({
+                max_height_eaves_m_display: event.target.value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Altura a cumbrera</span>
+          <input
+            className="field"
+            value={planning.rules.max_height_ridge_m_display}
+            onChange={(event) =>
+              changeRules({
+                max_height_ridge_m_display: event.target.value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Retranqueo a linderos</span>
+          <input
+            className="field"
+            value={planning.rules.setback_boundary_m_display}
+            onChange={(event) =>
+              changeRules({
+                setback_boundary_m_display: event.target.value,
+              })
+            }
+          />
+        </label>
+
+        <label>
+          <span className="label">Retranqueo a calle</span>
+          <input
+            className="field"
+            value={planning.rules.setback_street_m_display}
+            onChange={(event) =>
+              changeRules({
+                setback_street_m_display: event.target.value,
+              })
+            }
+          />
+        </label>
+
         <label className="md:col-span-2">
           <span className="label">Review notes</span>
           <textarea
@@ -122,6 +241,19 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
               changePlanning({ review_notes: event.target.value })
             }
           />
+        </label>
+
+        <label className="flex items-center gap-3 rounded-md border border-line bg-white px-4 py-3 md:col-span-2">
+          <input
+            checked={planning.rules_confirmed_by_user}
+            type="checkbox"
+            onChange={(event) =>
+              changePlanning({ rules_confirmed_by_user: event.target.checked })
+            }
+          />
+          <span className="text-sm font-semibold text-ink">
+            Normativa revisada y confirmada por el usuario
+          </span>
         </label>
 
         <label>
