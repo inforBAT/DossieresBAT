@@ -6,6 +6,10 @@ import { fetchContentFromPublicUrl, fetchTextFromPublicUrl } from "@/lib/safeUrl
 
 export const runtime = "nodejs";
 
+const REMOTE_PDF_MAX_BYTES = 20_000_000;
+const REMOTE_PDF_SIZE_MESSAGE =
+  "El PDF supera el tamaño máximo de extracción automática. Descárgalo y súbelo manualmente o usa una versión más ligera.";
+
 interface ExtractFromUrlRequest {
   url?: string;
   selectedUrl?: string;
@@ -36,6 +40,8 @@ function shouldSuggestCandidates(confidence: string, hasUsefulData: boolean): bo
 async function extractFromPdfUrl(targetUrl: string) {
   const fetched = await fetchContentFromPublicUrl(targetUrl, {
     allowedContentTypes: ["application/pdf"],
+    maxBytes: REMOTE_PDF_MAX_BYTES,
+    sizeExceededMessage: REMOTE_PDF_SIZE_MESSAGE,
   });
   const extractedText = await extractTextFromPdfBytes(fetched.body);
 
