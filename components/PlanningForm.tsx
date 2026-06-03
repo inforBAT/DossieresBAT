@@ -31,6 +31,38 @@ interface ExtractFromPdfResponse {
   error?: string;
 }
 
+function normalizeHtmlError(html: string): string {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) {
+    return "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.";
+  }
+
+  return `El endpoint de extracción PDF devolvió una respuesta no JSON. ${text.slice(0, 180)}`;
+}
+
+async function readPdfExtractionResponse(
+  response: Response,
+): Promise<ExtractFromPdfResponse> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return (await response.json()) as ExtractFromPdfResponse;
+  }
+
+  const body = await response.text();
+  return {
+    error: body.trim().startsWith("<")
+      ? normalizeHtmlError(body)
+      : body.trim() || "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.",
+  };
+}
+
 export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) {
   const [message, setMessage] = useState("");
   const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
@@ -144,10 +176,12 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
         method: "POST",
         body: formData,
       });
-      const payload = (await response.json()) as ExtractFromPdfResponse;
+      const payload = await readPdfExtractionResponse(response);
 
       if (!response.ok || !payload.extraction) {
-        throw new Error(payload.error || "No se pudo extraer texto del PDF.");
+        throw new Error(
+          payload.error || `Error ${response.status} al extraer el PDF.`,
+        );
       }
 
       setLinkCandidates([]);

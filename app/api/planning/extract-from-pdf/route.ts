@@ -33,7 +33,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const text = await extractTextFromPdfBytes(new Uint8Array(await file.arrayBuffer()));
+    const text = await extractTextFromPdfBytes(
+      new Uint8Array(await file.arrayBuffer()),
+    );
     if (!text.trim()) {
       return NextResponse.json(
         {
