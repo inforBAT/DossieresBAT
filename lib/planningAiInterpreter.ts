@@ -46,6 +46,22 @@ interface SelectedAiChunks {
   totalChunks: number;
 }
 
+interface OpenAiResponsesPayload {
+  output_text?: string;
+  error?: {
+    message?: string;
+    type?: string;
+    code?: string;
+  };
+  output?: Array<{
+    type?: string;
+    content?: Array<{
+      type?: string;
+      text?: string;
+    }>;
+  }>;
+}
+
 const AI_CHUNK_KEYWORDS = [
   "edificabilidad",
   "aprovechamiento",
@@ -380,10 +396,13 @@ function aiClientConfig() {
   const apiKey =
     process.env.PLANNING_AI_API_KEY || process.env.OPENAI_API_KEY || "";
   const model = process.env.PLANNING_AI_MODEL || process.env.OPENAI_MODEL || "";
-  const apiUrl =
-    process.env.PLANNING_AI_API_URL ||
-    process.env.OPENAI_BASE_URL ||
-    "https://api.openai.com/v1/chat/completions";
+  const configuredApiUrl =
+    process.env.PLANNING_AI_API_URL || process.env.OPENAI_BASE_URL || "";
+  const apiUrl = hasText(configuredApiUrl)
+    ? configuredApiUrl.match(/\/v1\/(responses|chat\/completions)$/)
+      ? configuredApiUrl
+      : configuredApiUrl.replace(/\/+$/, "") + "/v1/responses"
+    : "https://api.openai.com/v1/responses";
 
   return {
     apiKey,
@@ -474,6 +493,37 @@ function parseMessageContent(content: unknown): string {
   return "";
 }
 
+function parseResponsesOutput(payload: OpenAiResponsesPayload): string {
+  if (hasText(payload.output_text)) {
+    return payload.output_text;
+  }
+
+  return (payload.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .map((content) => (typeof content.text === "string" ? content.text : ""))
+    .filter((text) => text.trim().length > 0)
+    .join("\n");
+}
+
+function summarizeApiErrorBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return "Sin detalle adicional.";
+  }
+
+  try {
+    const payload = JSON.parse(trimmed) as OpenAiResponsesPayload;
+    const errorMessage = payload.error?.message;
+    if (hasText(errorMessage)) {
+      return errorMessage.trim();
+    }
+  } catch {
+    // Fall through to text summary.
+  }
+
+  return trimmed.replace(/\s+/g, " ").slice(0, 300);
+}
+
 async function requestAiInterpretation(
   ingestion: PlanningPdfIngestion,
   selectedChunks: SelectedAiChunks,
@@ -492,33 +542,130 @@ async function requestAiInterpretation(
     },
     body: JSON.stringify({
       model: config.model,
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
+      input: [
         {
           role: "system",
-          content: aiSystemPrompt(),
+          content: [{ type: "input_text", text: aiSystemPrompt() }],
         },
         {
           role: "user",
-          content: aiUserPrompt(ingestion, selectedChunks, context),
+          content: [
+            {
+              type: "input_text",
+              text: aiUserPrompt(ingestion, selectedChunks, context),
+            },
+          ],
         },
       ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "planning_rules_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              document_sufficient: { type: "boolean" },
+              confidence: {
+                type: "string",
+                enum: ["low", "medium", "high"],
+              },
+              zone: { type: "string" },
+              ordinance: { type: "string" },
+              warnings: {
+                type: "array",
+                items: { type: "string" },
+              },
+              review_notes: {
+                type: "array",
+                items: { type: "string" },
+              },
+              source_articles: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    article: { type: "string" },
+                    page: {
+                      anyOf: [{ type: "number" }, { type: "null" }],
+                    },
+                    excerpt: { type: "string" },
+                  },
+                  required: ["article", "page", "excerpt"],
+                },
+              },
+              rules: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  buildability_total_m2: {
+                    anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                  },
+                  buildability_above_ground_m2: {
+                    anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                  },
+                  buildability_below_ground_m2: {
+                    anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                  },
+                  occupancy: {
+                    anyOf: [{ type: "string" }, { type: "number" }, { type: "null" }],
+                  },
+                  max_floors: {
+                    anyOf: [{ type: "string" }, { type: "number" }, { type: "null" }],
+                  },
+                  max_height_eaves_m: {
+                    anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                  },
+                  max_height_ridge_m: {
+                    anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                  },
+                  setback_boundary_m: {
+                    anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                  },
+                  setback_street_m: {
+                    anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                  },
+                },
+                required: [
+                  "buildability_total_m2",
+                  "buildability_above_ground_m2",
+                  "buildability_below_ground_m2",
+                  "occupancy",
+                  "max_floors",
+                  "max_height_eaves_m",
+                  "max_height_ridge_m",
+                  "setback_boundary_m",
+                  "setback_street_m",
+                ],
+              },
+            },
+            required: [
+              "document_sufficient",
+              "confidence",
+              "zone",
+              "ordinance",
+              "warnings",
+              "review_notes",
+              "source_articles",
+              "rules",
+            ],
+          },
+        },
+      },
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`AI interpreter HTTP ${response.status}`);
+    const errorBody = await response.text();
+    throw new Error(
+      `OpenAI devolvio ${response.status}: ${summarizeApiErrorBody(errorBody)}`,
+    );
   }
 
-  const payload = (await response.json()) as {
-    choices?: Array<{
-      message?: {
-        content?: unknown;
-      };
-    }>;
-  };
-  const content = parseMessageContent(payload.choices?.[0]?.message?.content);
+  const payload = (await response.json()) as OpenAiResponsesPayload;
+  const content = parseResponsesOutput(payload);
 
   if (!hasText(content)) {
     throw new Error("AI interpreter returned empty content.");
