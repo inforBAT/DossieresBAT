@@ -479,6 +479,8 @@ export function applyPlanningExtractionProposal(
     return {
       planning: {
         ...nextPlanning,
+        status: "processed_needs_review",
+        rules_confirmed_by_user: false,
         review_notes: reviewNotes,
       },
       appliedFields,
@@ -652,6 +654,7 @@ export function applyPlanningExtractionProposal(
   return {
     planning: {
       ...nextPlanning,
+      status: "processed_needs_review",
       rules_confirmed_by_user: false,
       review_notes: reviewNotes,
     },

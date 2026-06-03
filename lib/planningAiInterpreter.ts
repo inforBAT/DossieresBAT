@@ -40,6 +40,37 @@ interface PlanningAiPayload {
   rules?: Partial<Record<keyof PlanningRules, string | number | null>>;
 }
 
+interface SelectedAiChunks {
+  chunks: PlanningPdfChunk[];
+  truncated: boolean;
+  totalChunks: number;
+}
+
+const AI_CHUNK_KEYWORDS = [
+  "edificabilidad",
+  "aprovechamiento",
+  "ocupacion",
+  "ocupacion maxima",
+  "altura",
+  "alero",
+  "cumbrera",
+  "plantas",
+  "retranqueo",
+  "lindero",
+  "linderos",
+  "alineacion",
+  "rasante",
+  "ordenanza",
+  "zona",
+  "parcela minima",
+  "ficha",
+  "pgou",
+];
+const MAX_AI_CHUNKS = 10;
+const MAX_AI_CHARACTERS = 18000;
+const AI_TRUNCATION_WARNING =
+  "Se interpretaron los fragmentos mas relevantes del PDF; el documento completo no se envio a IA por tamano.";
+
 function hasText(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -89,6 +120,92 @@ function uniqueSourceArticles(
   }
 
   return result;
+}
+
+function rankChunkForPlanning(chunk: PlanningPdfChunk): number {
+  const normalized = chunk.text.toLocaleLowerCase("es");
+  let score = 0;
+
+  for (const keyword of AI_CHUNK_KEYWORDS) {
+    if (normalized.includes(keyword)) {
+      score += keyword.length >= 10 ? 3 : 2;
+    }
+  }
+
+  if (/\bart(?:iculo)?s?\b/.test(normalized)) {
+    score += 2;
+  }
+
+  if (/\b(?:m2|m²|%|plantas?)\b/.test(normalized)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function selectChunksForAi(ingestion: PlanningPdfIngestion): SelectedAiChunks {
+  const rankedChunks = ingestion.chunks
+    .map((chunk, index) => ({
+      chunk,
+      score: rankChunkForPlanning(chunk),
+      index,
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      if (left.chunk.page_start !== right.chunk.page_start) {
+        return left.chunk.page_start - right.chunk.page_start;
+      }
+
+      return left.index - right.index;
+    });
+
+  const candidates =
+    rankedChunks.some((item) => item.score > 0)
+      ? rankedChunks
+      : ingestion.chunks.map((chunk, index) => ({
+          chunk,
+          score: 0,
+          index,
+        }));
+
+  const selected: PlanningPdfChunk[] = [];
+  let usedCharacters = 0;
+
+  for (const item of candidates) {
+    if (selected.length >= MAX_AI_CHUNKS) {
+      break;
+    }
+
+    const candidateLength = item.chunk.text.length;
+    const wouldOverflow = usedCharacters + candidateLength > MAX_AI_CHARACTERS;
+    if (selected.length > 0 && wouldOverflow) {
+      continue;
+    }
+
+    selected.push(item.chunk);
+    usedCharacters += candidateLength;
+  }
+
+  if (selected.length === 0 && ingestion.chunks.length > 0) {
+    selected.push(ingestion.chunks[0]);
+  }
+
+  selected.sort((left, right) => {
+    if (left.page_start !== right.page_start) {
+      return left.page_start - right.page_start;
+    }
+
+    return left.id.localeCompare(right.id, "es");
+  });
+
+  return {
+    chunks: selected,
+    truncated: selected.length < ingestion.chunks.length,
+    totalChunks: ingestion.chunks.length,
+  };
 }
 
 function findSourceArticleForExcerpt(
@@ -198,7 +315,7 @@ function buildDefaultWarnings(
 
   if (!hasText(payload?.zone) && !hasText(context.currentZone)) {
     warnings.push(
-      "No se ha identificado una zona urbanística concreta. Puede faltar la ficha de zona o PGOU aplicable.",
+      "No se ha identificado una zona urbanistica concreta. Puede faltar la ficha de zona o PGOU aplicable.",
     );
   }
 
@@ -210,7 +327,7 @@ function buildDefaultWarnings(
 
   if (!hasUsefulData) {
     warnings.push(
-      "Documento leído, pero no contiene parámetros urbanísticos suficientes para la parcela. Falta documento de planeamiento/ficha de zona.",
+      "Documento leido, pero no contiene parametros urbanisticos suficientes para la parcela. Falta documento de planeamiento/ficha de zona.",
     );
   }
 
@@ -220,7 +337,7 @@ function buildDefaultWarnings(
 function buildHeuristicFallback(
   ingestion: PlanningPdfIngestion,
   context: PlanningAiInterpretationContext,
-  warning?: string,
+  warningsToAppend: string[] = [],
 ): PlanningExtractionResult {
   const heuristic = extractPlanningRulesFromText(ingestion.raw_text, {
     sourceType: "pdf",
@@ -232,7 +349,7 @@ function buildHeuristicFallback(
     {
       zone: heuristic.zone,
       ordinance: heuristic.ordinance,
-      warnings: warning ? [warning, ...heuristic.warnings] : heuristic.warnings,
+      warnings: [...warningsToAppend, ...heuristic.warnings],
     },
     context,
     hasUsefulData,
@@ -255,12 +372,13 @@ function buildHeuristicFallback(
           ).page,
       })),
     ),
-    reviewNotes: warning ? [warning] : [],
+    reviewNotes: warningsToAppend,
   };
 }
 
 function aiClientConfig() {
-  const apiKey = process.env.PLANNING_AI_API_KEY || process.env.OPENAI_API_KEY || "";
+  const apiKey =
+    process.env.PLANNING_AI_API_KEY || process.env.OPENAI_API_KEY || "";
   const model = process.env.PLANNING_AI_MODEL || process.env.OPENAI_MODEL || "";
   const apiUrl =
     process.env.PLANNING_AI_API_URL ||
@@ -277,26 +395,32 @@ function aiClientConfig() {
 
 function aiSystemPrompt(): string {
   return [
-    "Eres un analista urbanístico que interpreta normativa a partir de texto extraído de PDFs.",
-    "Devuelve exclusivamente JSON válido.",
-    "No inventes datos urbanísticos no presentes en el documento.",
+    "Eres un analista urbanistico que interpreta normativa a partir de texto extraido de PDFs.",
+    "Devuelve exclusivamente JSON valido.",
+    "No inventes datos urbanisticos no presentes en el documento.",
     "Si el documento no contiene datos suficientes, marca document_sufficient=false y explica la carencia en warnings.",
-    "Nunca confirmes la normativa del usuario ni afirmes que está validada.",
-    "Busca únicamente: zona, ordenanza, edificabilidad total/sobre rasante/bajo rasante, ocupación, número máximo de plantas, altura de alero, altura de cumbrera, retranqueos a linderos y a calle.",
+    "Nunca confirmes la normativa del usuario ni afirmes que esta validada.",
+    "Busca unicamente: zona, ordenanza, edificabilidad total/sobre rasante/bajo rasante, ocupacion, numero maximo de plantas, altura de alero, altura de cumbrera, retranqueos a linderos y a calle.",
     "Incluye source_articles con article, page y excerpt cuando cites una regla.",
   ].join(" ");
 }
 
 function aiUserPrompt(
   ingestion: PlanningPdfIngestion,
+  selectedChunks: SelectedAiChunks,
   context: PlanningAiInterpretationContext,
 ): string {
   return JSON.stringify(
     {
-      task: "Interpretar normativa urbanística en JSON estricto",
+      task: "Interpretar normativa urbanistica en JSON estricto",
       context,
       parser: ingestion.parser,
-      chunks: ingestion.chunks,
+      chunk_selection: {
+        total_chunks_in_pdf: selectedChunks.totalChunks,
+        selected_chunks: selectedChunks.chunks.length,
+        truncated_for_size: selectedChunks.truncated,
+      },
+      chunks: selectedChunks.chunks,
       expected_json_shape: {
         document_sufficient: true,
         confidence: "low | medium | high",
@@ -341,7 +465,7 @@ function parseMessageContent(content: unknown): string {
         item !== null &&
         "text" in item &&
         typeof (item as { text?: unknown }).text === "string"
-          ? ((item as { text: string }).text)
+          ? (item as { text: string }).text
           : "",
       )
       .join("\n");
@@ -352,6 +476,7 @@ function parseMessageContent(content: unknown): string {
 
 async function requestAiInterpretation(
   ingestion: PlanningPdfIngestion,
+  selectedChunks: SelectedAiChunks,
   context: PlanningAiInterpretationContext,
 ): Promise<PlanningAiPayload | null> {
   const config = aiClientConfig();
@@ -376,7 +501,7 @@ async function requestAiInterpretation(
         },
         {
           role: "user",
-          content: aiUserPrompt(ingestion, context),
+          content: aiUserPrompt(ingestion, selectedChunks, context),
         },
       ],
     }),
@@ -428,14 +553,20 @@ export async function interpretPlanningPdfWithAi(
   ingestion: PlanningPdfIngestion,
   context: PlanningAiInterpretationContext,
 ): Promise<PlanningExtractionResult> {
+  const selectedChunks = selectChunksForAi(ingestion);
+  const sharedWarnings = selectedChunks.truncated ? [AI_TRUNCATION_WARNING] : [];
+
   try {
-    const aiPayload = await requestAiInterpretation(ingestion, context);
+    const aiPayload = await requestAiInterpretation(
+      ingestion,
+      selectedChunks,
+      context,
+    );
     if (!aiPayload) {
-      return buildHeuristicFallback(
-        ingestion,
-        context,
-        "Interpretación IA no configurada; se ha aplicado el extractor heurístico local.",
-      );
+      return buildHeuristicFallback(ingestion, context, [
+        "Interpretacion IA no configurada; se ha aplicado el extractor heuristico local.",
+        ...sharedWarnings,
+      ]);
     }
 
     const rules = normalizeRules(aiPayload.rules);
@@ -444,7 +575,14 @@ export async function interpretPlanningPdfWithAi(
         ? Number.isFinite(value)
         : hasText(typeof value === "string" ? value : ""),
     );
-    const warnings = buildDefaultWarnings(aiPayload, context, hasUsefulData);
+    const warnings = buildDefaultWarnings(
+      {
+        ...aiPayload,
+        warnings: [...sharedWarnings, ...(aiPayload.warnings ?? [])],
+      },
+      context,
+      hasUsefulData,
+    );
 
     return {
       sourceType: "pdf",
@@ -456,16 +594,23 @@ export async function interpretPlanningPdfWithAi(
       rules,
       rawMatches: [],
       warnings,
-      sourceArticles: buildAiSourceArticles(aiPayload, context, ingestion.chunks),
+      sourceArticles: buildAiSourceArticles(
+        aiPayload,
+        context,
+        selectedChunks.chunks,
+      ),
       reviewNotes: uniqueStrings(aiPayload.review_notes ?? []),
     };
   } catch (error) {
-    return buildHeuristicFallback(
-      ingestion,
-      context,
-      error instanceof Error
-        ? `La interpretación IA no se pudo completar. Se aplica extractor heurístico local: ${error.message}`
-        : "La interpretación IA no se pudo completar. Se aplica extractor heurístico local.",
-    );
+    return buildHeuristicFallback(ingestion, context, [
+      ...(error instanceof Error
+        ? [
+            `La interpretacion IA no se pudo completar. Se aplica extractor heuristico local: ${error.message}`,
+          ]
+        : [
+            "La interpretacion IA no se pudo completar. Se aplica extractor heuristico local.",
+          ]),
+      ...sharedWarnings,
+    ]);
   }
 }
