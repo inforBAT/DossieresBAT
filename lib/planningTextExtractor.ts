@@ -3,7 +3,11 @@ import {
   formatSquareMeters,
   parseMetricNumber,
 } from "./planningNormalizer";
-import type { PlanningBlock, PlanningRules } from "./projectInputSchema";
+import type {
+  PlanningBlock,
+  PlanningRules,
+  PlanningSourceArticle,
+} from "./projectInputSchema";
 
 export type PlanningExtractionSourceType = "pdf" | "url";
 export type PlanningExtractionConfidence = "low" | "medium" | "high";
@@ -25,7 +29,8 @@ export interface PlanningExtractionResult {
   rules: Partial<PlanningRules>;
   rawMatches: ExtractedPlanningMatch[];
   warnings: string[];
-  sourceArticles: string[];
+  sourceArticles: PlanningSourceArticle[];
+  reviewNotes?: string[];
 }
 
 export interface AppliedPlanningExtraction {
@@ -68,6 +73,33 @@ function uniqueStrings(values: string[]): string[] {
     if (!seen.has(key)) {
       seen.add(key);
       result.push(trimmed);
+    }
+  }
+
+  return result;
+}
+
+function uniqueSourceArticles(
+  articles: PlanningSourceArticle[],
+): PlanningSourceArticle[] {
+  const result: PlanningSourceArticle[] = [];
+  const seen = new Set<string>();
+
+  for (const article of articles) {
+    const key = [
+      article.source_label.trim().toLocaleLowerCase("es"),
+      article.article.trim().toLocaleLowerCase("es"),
+      article.page ?? "",
+      article.excerpt.trim().toLocaleLowerCase("es"),
+    ].join("|");
+
+    if (!key.replace(/\|/g, "")) {
+      continue;
+    }
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(article);
     }
   }
 
@@ -322,10 +354,14 @@ export function extractPlanningRulesFromText(
     );
   }
 
-  const sourceArticles = uniqueStrings(matches.map((match) => match.snippet)).slice(
-    0,
-    MAX_SOURCE_ARTICLES,
-  );
+  const sourceArticles = uniqueSourceArticles(
+    matches.map((match) => ({
+      source_label: options.sourceLabel,
+      article: "",
+      page: null,
+      excerpt: match.snippet,
+    })),
+  ).slice(0, MAX_SOURCE_ARTICLES);
 
   return {
     sourceType: options.sourceType,
@@ -378,6 +414,7 @@ export function extractPlanningRulesFromText(
     rawMatches: matches,
     warnings,
     sourceArticles,
+    reviewNotes: [],
   };
 }
 
@@ -418,7 +455,7 @@ export function applyPlanningExtractionProposal(
 ): AppliedPlanningExtraction {
   const nextPlanning: PlanningBlock = {
     ...planning,
-    source_articles: uniqueStrings([
+    source_articles: uniqueSourceArticles([
       ...planning.source_articles,
       ...result.sourceArticles,
     ]).slice(0, MAX_SOURCE_ARTICLES),
@@ -435,12 +472,15 @@ export function applyPlanningExtractionProposal(
     const reviewNotes = appendText(planning.review_notes, [
       extractionLabel,
       "La normativa ya estaba confirmada por el usuario. No se han sobrescrito valores.",
+      ...(result.reviewNotes ?? []),
       ...warnings,
     ]);
 
     return {
       planning: {
         ...nextPlanning,
+        status: "processed_needs_review",
+        rules_confirmed_by_user: false,
         review_notes: reviewNotes,
       },
       appliedFields,
@@ -607,12 +647,14 @@ export function applyPlanningExtractionProposal(
     appliedFields.length > 0
       ? `Campos propuestos aplicados: ${appliedFields.join(", ")}`
       : "No se aplicaron campos nuevos automáticamente.",
+    ...(result.reviewNotes ?? []),
     ...warnings,
   ]);
 
   return {
     planning: {
       ...nextPlanning,
+      status: "processed_needs_review",
       rules_confirmed_by_user: false,
       review_notes: reviewNotes,
     },

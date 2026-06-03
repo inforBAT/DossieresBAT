@@ -11,12 +11,15 @@ import type {
   AssetsBlock,
   PlanningBlock,
   PlanningRules,
+  SiteBlock,
   UploadedAsset,
 } from "@/lib/projectInputSchema";
+import type { PlanningPdfErrorCode } from "@/lib/planningPdfPipeline";
 
 interface PlanningFormProps {
   assets: AssetsBlock;
   planning: PlanningBlock;
+  site: SiteBlock;
   onChange: (next: { assets?: AssetsBlock; planning?: PlanningBlock }) => void;
 }
 
@@ -28,7 +31,11 @@ interface ExtractFromUrlResponse {
 
 interface ExtractFromPdfResponse {
   extraction?: PlanningExtractionResult;
-  error?: string;
+  error?: {
+    code: PlanningPdfErrorCode;
+    message: string;
+    details?: string;
+  };
 }
 
 function normalizeHtmlError(html: string): string {
@@ -57,13 +64,22 @@ async function readPdfExtractionResponse(
 
   const body = await response.text();
   return {
-    error: body.trim().startsWith("<")
-      ? normalizeHtmlError(body)
-      : body.trim() || "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.",
+    error: {
+      code: "pdf_parser_failed",
+      message: body.trim().startsWith("<")
+        ? normalizeHtmlError(body)
+        : body.trim() ||
+          "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.",
+    },
   };
 }
 
-export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) {
+export function PlanningForm({
+  assets,
+  planning,
+  site,
+  onChange,
+}: PlanningFormProps) {
   const [message, setMessage] = useState("");
   const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
   const [extractingPdf, setExtractingPdf] = useState(false);
@@ -129,7 +145,8 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
 
     if (!extraction.hasUsefulData) {
       setMessage(
-        "No se detectaron reglas claras. Introduce la normativa manualmente o revisa la fuente.",
+        extraction.warnings[0] ||
+          "No se detectaron reglas claras. Introduce la normativa manualmente o revisa la fuente.",
       );
       return;
     }
@@ -171,6 +188,11 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
         assets.planning_files[assets.planning_files.length - 1]?.path ??
           planningSourceFile.name,
       );
+      formData.set("municipality", planning.municipality || site.municipality);
+      formData.set("address", site.address);
+      formData.set("cadastreReference", site.cadastre_reference);
+      formData.set("currentZone", planning.zone);
+      formData.set("currentOrdinance", planning.ordinance);
 
       const response = await fetch("/api/planning/extract-from-pdf", {
         method: "POST",
@@ -180,7 +202,8 @@ export function PlanningForm({ assets, planning, onChange }: PlanningFormProps) 
 
       if (!response.ok || !payload.extraction) {
         throw new Error(
-          payload.error || `Error ${response.status} al extraer el PDF.`,
+          payload.error?.message ||
+            `Error ${response.status} al extraer el PDF.`,
         );
       }
 
