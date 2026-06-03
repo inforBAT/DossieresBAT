@@ -40,10 +40,15 @@ interface ExtractFromPdfResponse {
   };
 }
 
+interface DiscoverPlanningResponse {
+  candidates?: PlanningLinkCandidate[];
+  warnings?: string[];
+  error?: string;
+}
+
 interface PlanningGuidanceState {
   title: string;
   description: string;
-  showSearchAction: boolean;
 }
 
 function normalizeHtmlError(html: string): string {
@@ -55,10 +60,10 @@ function normalizeHtmlError(html: string): string {
     .trim();
 
   if (!text) {
-    return "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.";
+    return "El endpoint de extraccion PDF devolvio una respuesta no JSON. Revisa la consola del servidor.";
   }
 
-  return `El endpoint de extracción PDF devolvió una respuesta no JSON. ${text.slice(0, 180)}`;
+  return `El endpoint de extraccion PDF devolvio una respuesta no JSON. ${text.slice(0, 180)}`;
 }
 
 async function readPdfExtractionResponse(
@@ -77,14 +82,13 @@ async function readPdfExtractionResponse(
       message: body.trim().startsWith("<")
         ? normalizeHtmlError(body)
         : body.trim() ||
-          "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.",
+          "El endpoint de extraccion PDF devolvio una respuesta no JSON. Revisa la consola del servidor.",
     },
   };
 }
 
 function buildPlanningGuidance(
   extraction: PlanningExtractionResult,
-  hasPlanningUrl: boolean,
 ): PlanningGuidanceState | null {
   if (!needsComplementaryPlanningDocuments(extraction)) {
     return null;
@@ -95,7 +99,6 @@ function buildPlanningGuidance(
       "El PDF se ha leido con IA, pero parece ser una ordenanza general. Falta la ficha urbanistica o el ambito aplicable a la parcela.",
     description:
       "Siguiente paso recomendado: usa direccion, municipio y referencia catastral para buscar documentos complementarios, o sube manualmente la ficha urbanistica, PGOU o plano de zonificacion.",
-    showSearchAction: hasPlanningUrl,
   };
 }
 
@@ -109,6 +112,7 @@ export function PlanningForm({
   const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
   const [extractingPdf, setExtractingPdf] = useState(false);
   const [extractingUrl, setExtractingUrl] = useState(false);
+  const [discoveringPlanning, setDiscoveringPlanning] = useState(false);
   const [processingCandidateUrl, setProcessingCandidateUrl] = useState("");
   const [linkCandidates, setLinkCandidates] = useState<PlanningLinkCandidate[]>([]);
   const [planningGuidance, setPlanningGuidance] =
@@ -169,9 +173,7 @@ export function PlanningForm({
   ) {
     const applied = applyPlanningExtractionProposal(planning, extraction);
     changePlanning(applied.planning);
-    setPlanningGuidance(
-      buildPlanningGuidance(extraction, Boolean(planning.planning_url.trim())),
-    );
+    setPlanningGuidance(buildPlanningGuidance(extraction));
 
     const hasClearSources = hasClearPlanningSourceArticles(extraction);
     const needsComplementaryDocs =
@@ -289,7 +291,9 @@ export function PlanningForm({
     const payload = (await response.json()) as ExtractFromUrlResponse;
 
     if (!response.ok || !payload.extraction) {
-      throw new Error(payload.error || "No se pudo extraer normativa desde la URL.");
+      throw new Error(
+        payload.error || "No se pudo extraer normativa desde la URL.",
+      );
     }
 
     return payload;
@@ -309,7 +313,7 @@ export function PlanningForm({
 
       if ((payload.linkCandidates?.length ?? 0) > 0) {
         setMessage(
-          "No se encontraron reglas claras en esta página. Se han encontrado documentos candidatos para revisar.",
+          "No se encontraron reglas claras en esta pagina. Se han encontrado documentos candidatos para revisar.",
         );
       }
     } catch (error) {
@@ -323,9 +327,63 @@ export function PlanningForm({
     }
   }
 
+  async function discoverComplementaryDocuments() {
+    setDiscoveringPlanning(true);
+    try {
+      const response = await fetch("/api/planning/discover", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          municipality: planning.municipality || site.municipality,
+          address: site.address,
+          cadastre_reference: site.cadastre_reference,
+          planning_url: planning.planning_url,
+          current_warnings: planning.review_notes
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean),
+        }),
+      });
+      const payload = (await response.json()) as DiscoverPlanningResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ||
+            "No se pudieron buscar documentos complementarios.",
+        );
+      }
+
+      setLinkCandidates(payload.candidates ?? []);
+      setMessage(
+        (payload.candidates?.length ?? 0) > 0
+          ? "Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela."
+          : payload.warnings?.[0] ||
+              "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron buscar documentos complementarios.",
+      );
+    } finally {
+      setDiscoveringPlanning(false);
+    }
+  }
+
+  function useLinkCandidate(candidate: PlanningLinkCandidate) {
+    changePlanning({ planning_url: candidate.url });
+    setMessage(
+      "Se ha seleccionado un documento candidato. Revisa la URL y ejecuta Extraer normativa de URL cuando quieras analizarlo.",
+    );
+  }
+
   async function processLinkCandidate(candidate: PlanningLinkCandidate) {
     setProcessingCandidateUrl(candidate.url);
     try {
+      changePlanning({ planning_url: candidate.url });
       const payload = await requestUrlExtraction(candidate.url);
       setLinkCandidates(payload.linkCandidates ?? []);
       applyExtractionResult(candidate.title, payload.extraction!);
@@ -534,7 +592,9 @@ export function PlanningForm({
           <button
             className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
-            disabled={extractingUrl || !planning.planning_url.trim()}
+            disabled={
+              extractingUrl || discoveringPlanning || !planning.planning_url.trim()
+            }
             onClick={() => void extractFromUrl()}
           >
             {extractingUrl ? "Extrayendo URL..." : "Extraer normativa de URL"}
@@ -548,16 +608,16 @@ export function PlanningForm({
               {planningGuidance.description}
             </p>
             <div className="mt-3 flex flex-wrap gap-3">
-              {planningGuidance.showSearchAction && (
-                <button
-                  className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
-                  disabled={extractingUrl}
-                  onClick={() => void extractFromUrl()}
-                >
-                  Buscar documento urbanistico complementario
-                </button>
-              )}
+              <button
+                className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                disabled={discoveringPlanning || extractingUrl}
+                onClick={() => void discoverComplementaryDocuments()}
+              >
+                {discoveringPlanning
+                  ? "Buscando documentos..."
+                  : "Buscar ficha urbanistica / documento complementario"}
+              </button>
               <span className="text-sm text-ink/70">
                 Tambien puedes subir manualmente ficha urbanistica, PGOU o plano de zonificacion en Archivo normativa.
               </span>
@@ -568,7 +628,7 @@ export function PlanningForm({
         {linkCandidates.length > 0 && (
           <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
             <p className="mb-3 text-sm font-semibold text-ink">
-              No se encontraron reglas claras en la página inicial. Documentos candidatos:
+              Se han encontrado documentos candidatos. Revisa y elige el que mejor encaje con la parcela.
             </p>
             <div className="space-y-3">
               {linkCandidates.map((candidate) => (
@@ -580,19 +640,32 @@ export function PlanningForm({
                     <p className="text-sm font-semibold text-ink">{candidate.title}</p>
                     <p className="text-xs text-ink/60">{candidate.url}</p>
                     <p className="mt-1 text-xs text-ink/70">
-                      {candidate.sourceType} · {candidate.confidence} · {candidate.reason}
+                      {candidate.kind} · {candidate.confidence} · {candidate.reason}
+                    </p>
+                    <p className="mt-1 text-xs text-ink/60">
+                      Fuente: {candidate.source}
                     </p>
                   </div>
-                  <button
-                    className="rounded-md border border-line bg-soft px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                    type="button"
-                    disabled={processingCandidateUrl === candidate.url}
-                    onClick={() => void processLinkCandidate(candidate)}
-                  >
-                    {processingCandidateUrl === candidate.url
-                      ? "Procesando..."
-                      : "Procesar"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      type="button"
+                      disabled={processingCandidateUrl === candidate.url}
+                      onClick={() => useLinkCandidate(candidate)}
+                    >
+                      Usar este documento
+                    </button>
+                    <button
+                      className="rounded-md border border-line bg-soft px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      type="button"
+                      disabled={processingCandidateUrl === candidate.url}
+                      onClick={() => void processLinkCandidate(candidate)}
+                    >
+                      {processingCandidateUrl === candidate.url
+                        ? "Procesando..."
+                        : "Extraer ahora"}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
