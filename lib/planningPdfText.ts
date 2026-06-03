@@ -1,30 +1,19 @@
 import "server-only";
+import { PDFParse } from "pdf-parse";
 
 async function extractTextFromPdfData(
   data: ArrayBuffer | Uint8Array,
 ): Promise<string> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const document = await pdfjs.getDocument({
-    data,
-  } as Parameters<typeof pdfjs.getDocument>[0]).promise;
+  const parser = new PDFParse({
+    data: data instanceof Uint8Array ? data : new Uint8Array(data),
+  });
 
-  const pages: string[] = [];
-
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const text = textContent.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (text) {
-      pages.push(text);
-    }
+  try {
+    const result = await parser.getText();
+    return result.text.replace(/\s+\n/g, "\n").trim();
+  } finally {
+    await parser.destroy();
   }
-
-  return pages.join("\n");
 }
 export async function extractTextFromPdfBytes(
   data: ArrayBuffer | Uint8Array,
