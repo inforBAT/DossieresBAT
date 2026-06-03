@@ -18,6 +18,7 @@ import {
   type GraphicType,
   type LayoutPlanStatus,
   type OverflowPolicy,
+  type PlanningSourceArticle,
   type PlanningStatus,
   type ProjectInputV2,
   type SurveyStatus,
@@ -198,6 +199,43 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function normalizePlanningSourceArticles(
+  value: unknown,
+): PlanningSourceArticle[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item === "string") {
+      return [
+        {
+          source_label: "",
+          article: "",
+          page: null,
+          excerpt: item,
+        },
+      ];
+    }
+
+    if (typeof item !== "object" || item === null) {
+      return [];
+    }
+
+    return [
+      {
+        source_label: stringValue((item as Record<string, unknown>).source_label),
+        article: stringValue((item as Record<string, unknown>).article),
+        page:
+          typeof (item as Record<string, unknown>).page === "number"
+            ? ((item as Record<string, unknown>).page as number)
+            : null,
+        excerpt: stringValue((item as Record<string, unknown>).excerpt),
+      },
+    ];
+  });
 }
 
 function normalizeGraphicSpecs(specs: unknown): GraphicSpec[] {
@@ -396,8 +434,9 @@ export function buildProjectInput(
         ...base.planning.rules,
         ...seed?.planning?.rules,
       },
-      source_articles:
+      source_articles: normalizePlanningSourceArticles(
         seed?.planning?.source_articles ?? base.planning.source_articles,
+      ),
       review_notes:
         seed?.planning?.review_notes ?? base.planning.review_notes,
     },

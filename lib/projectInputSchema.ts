@@ -196,6 +196,13 @@ export interface PlanningRules {
   pool_boundary_m_display?: string;
 }
 
+export interface PlanningSourceArticle {
+  source_label: string;
+  article: string;
+  page: number | null;
+  excerpt: string;
+}
+
 export interface PlanningBlock {
   status: PlanningStatus;
   municipality: string;
@@ -206,7 +213,7 @@ export interface PlanningBlock {
   ordinance: string;
   rules_confirmed_by_user: boolean;
   rules: PlanningRules;
-  source_articles: string[];
+  source_articles: PlanningSourceArticle[];
   review_notes: string;
 }
 

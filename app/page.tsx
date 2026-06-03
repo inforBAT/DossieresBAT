@@ -161,6 +161,7 @@ export default function Home() {
       <PlanningForm
         assets={projectInput.assets}
         planning={projectInput.planning}
+        site={projectInput.site}
         onChange={(next) =>
           commit((current) => ({
             ...current,
