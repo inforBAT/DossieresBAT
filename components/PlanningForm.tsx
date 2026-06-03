@@ -4,6 +4,8 @@ import { useState } from "react";
 import { normalizeUploadedFile } from "@/lib/normalizeUploadedFile";
 import {
   applyPlanningExtractionProposal,
+  hasClearPlanningSourceArticles,
+  needsComplementaryPlanningDocuments,
   type PlanningExtractionResult,
 } from "@/lib/planningTextExtractor";
 import type { PlanningLinkCandidate } from "@/lib/planningUrlCandidates";
@@ -36,6 +38,12 @@ interface ExtractFromPdfResponse {
     message: string;
     details?: string;
   };
+}
+
+interface PlanningGuidanceState {
+  title: string;
+  description: string;
+  showSearchAction: boolean;
 }
 
 function normalizeHtmlError(html: string): string {
@@ -74,6 +82,23 @@ async function readPdfExtractionResponse(
   };
 }
 
+function buildPlanningGuidance(
+  extraction: PlanningExtractionResult,
+  hasPlanningUrl: boolean,
+): PlanningGuidanceState | null {
+  if (!needsComplementaryPlanningDocuments(extraction)) {
+    return null;
+  }
+
+  return {
+    title:
+      "El PDF se ha leido con IA, pero parece ser una ordenanza general. Falta la ficha urbanistica o el ambito aplicable a la parcela.",
+    description:
+      "Siguiente paso recomendado: usa direccion, municipio y referencia catastral para buscar documentos complementarios, o sube manualmente la ficha urbanistica, PGOU o plano de zonificacion.",
+    showSearchAction: hasPlanningUrl,
+  };
+}
+
 export function PlanningForm({
   assets,
   planning,
@@ -86,6 +111,8 @@ export function PlanningForm({
   const [extractingUrl, setExtractingUrl] = useState(false);
   const [processingCandidateUrl, setProcessingCandidateUrl] = useState("");
   const [linkCandidates, setLinkCandidates] = useState<PlanningLinkCandidate[]>([]);
+  const [planningGuidance, setPlanningGuidance] =
+    useState<PlanningGuidanceState | null>(null);
 
   function changePlanning(patch: Partial<PlanningBlock>) {
     onChange({
@@ -142,6 +169,20 @@ export function PlanningForm({
   ) {
     const applied = applyPlanningExtractionProposal(planning, extraction);
     changePlanning(applied.planning);
+    setPlanningGuidance(
+      buildPlanningGuidance(extraction, Boolean(planning.planning_url.trim())),
+    );
+
+    const hasClearSources = hasClearPlanningSourceArticles(extraction);
+    const needsComplementaryDocs =
+      needsComplementaryPlanningDocuments(extraction);
+
+    if (needsComplementaryDocs) {
+      setMessage(
+        "El PDF se ha leido con IA, pero parece ser una ordenanza general. Falta la ficha urbanistica o el ambito aplicable a la parcela.",
+      );
+      return;
+    }
 
     if (!extraction.hasUsefulData) {
       setMessage(
@@ -154,6 +195,13 @@ export function PlanningForm({
     if (applied.appliedFields.length > 0) {
       setMessage(
         `Normativa extraida desde ${sourceLabel}. Revisa los valores antes de confirmar.`,
+      );
+      return;
+    }
+
+    if (extraction.confidence === "low" && !hasClearSources) {
+      setMessage(
+        "La lectura del PDF es de confianza baja y no aporta citas claras. Revisa las notas y busca documentacion complementaria.",
       );
       return;
     }
@@ -492,6 +540,30 @@ export function PlanningForm({
             {extractingUrl ? "Extrayendo URL..." : "Extraer normativa de URL"}
           </button>
         </div>
+
+        {planningGuidance && (
+          <div className="md:col-span-2 rounded-md border border-amber-300 bg-amber-50 p-4">
+            <p className="text-sm font-semibold text-ink">{planningGuidance.title}</p>
+            <p className="mt-2 text-sm text-ink/80">
+              {planningGuidance.description}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              {planningGuidance.showSearchAction && (
+                <button
+                  className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  type="button"
+                  disabled={extractingUrl}
+                  onClick={() => void extractFromUrl()}
+                >
+                  Buscar documento urbanistico complementario
+                </button>
+              )}
+              <span className="text-sm text-ink/70">
+                Tambien puedes subir manualmente ficha urbanistica, PGOU o plano de zonificacion en Archivo normativa.
+              </span>
+            </div>
+          </div>
+        )}
 
         {linkCandidates.length > 0 && (
           <div className="md:col-span-2 rounded-md border border-line bg-white p-4">

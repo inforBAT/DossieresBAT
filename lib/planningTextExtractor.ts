@@ -54,9 +54,29 @@ interface TextExtraction {
 }
 
 const MAX_SOURCE_ARTICLES = 8;
+const INSUFFICIENT_WARNING_PATTERNS = [
+  "falta ficha urbanistica",
+  "falta ambito concreto",
+  "falta ambito",
+  "no se ha identificado zona",
+  "no se ha identificado una zona",
+  "no se ha identificado ordenanza",
+  "no se ha identificado una ordenanza",
+  "documento leido, pero no contiene parametros urbanisticos suficientes",
+  "documento leido, pero no contiene parametros",
+  "falta documento de planeamiento",
+  "falta ficha de zona",
+];
 
 function hasText(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function normalizeForMatch(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es");
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -106,6 +126,31 @@ function uniqueSourceArticles(
   return result;
 }
 
+export function hasClearPlanningSourceArticles(
+  result: Pick<PlanningExtractionResult, "sourceArticles">,
+): boolean {
+  return result.sourceArticles.some(
+    (article) =>
+      hasText(article.excerpt) &&
+      (article.page !== null || hasText(article.article)),
+  );
+}
+
+export function needsComplementaryPlanningDocuments(
+  result: Pick<PlanningExtractionResult, "confidence" | "warnings">,
+): boolean {
+  if (result.confidence === "low") {
+    return true;
+  }
+
+  return result.warnings.some((warning) => {
+    const normalizedWarning = normalizeForMatch(warning);
+    return INSUFFICIENT_WARNING_PATTERNS.some((pattern) =>
+      normalizedWarning.includes(pattern),
+    );
+  });
+}
+
 function appendText(base: string, additions: string[]): string {
   return uniqueStrings(
     [base, ...additions]
@@ -135,7 +180,11 @@ function confidenceFromKeywords(
   keywords: string[],
 ): PlanningExtractionConfidence {
   const normalized = line.toLocaleLowerCase("es");
-  if (keywords.some((keyword) => normalized.includes(keyword.toLocaleLowerCase("es")))) {
+  if (
+    keywords.some((keyword) =>
+      normalized.includes(keyword.toLocaleLowerCase("es")),
+    )
+  ) {
     return "high";
   }
 
@@ -285,7 +334,12 @@ export function extractPlanningRulesFromText(
   const ordinance = extractTextFieldFromLines(lines, ["ordenanza", "ord."]);
   const buildabilityTotal = extractMetricFromLines(
     lines,
-    ["edificabilidad total", "edificabilidad maxima", "edificabilidad máxima", "aprovechamiento"],
+    [
+      "edificabilidad total",
+      "edificabilidad maxima",
+      "edificabilidad máxima",
+      "aprovechamiento",
+    ],
     "m2",
   );
   const buildabilityAboveGround = extractMetricFromLines(
@@ -315,7 +369,14 @@ export function extractPlanningRulesFromText(
   );
   const setbackStreet = extractMetricFromLines(
     lines,
-    ["retranqueo a calle", "retranqueo a vial", "alineacion", "alineación", "vial", "calle"],
+    [
+      "retranqueo a calle",
+      "retranqueo a vial",
+      "alineacion",
+      "alineación",
+      "vial",
+      "calle",
+    ],
     "m",
   );
   const occupancy = extractTextFieldFromLines(
@@ -324,12 +385,23 @@ export function extractPlanningRulesFromText(
   );
   const maxFloors = extractTextFieldFromLines(
     lines,
-    ["numero maximo de plantas", "número máximo de plantas", "maximo de plantas", "máximo de plantas", "plantas maximas", "plantas máximas"],
+    [
+      "numero maximo de plantas",
+      "número máximo de plantas",
+      "maximo de plantas",
+      "máximo de plantas",
+      "plantas maximas",
+      "plantas máximas",
+    ],
   );
 
   pushTextMatch(matches, "planning.zone", zone);
   pushTextMatch(matches, "planning.ordinance", ordinance);
-  pushMetricMatch(matches, "planning.rules.buildability_total_m2", buildabilityTotal);
+  pushMetricMatch(
+    matches,
+    "planning.rules.buildability_total_m2",
+    buildabilityTotal,
+  );
   pushMetricMatch(
     matches,
     "planning.rules.buildability_above_ground_m2",
@@ -344,8 +416,16 @@ export function extractPlanningRulesFromText(
   pushTextMatch(matches, "planning.rules.max_floors", maxFloors);
   pushMetricMatch(matches, "planning.rules.max_height_eaves_m", heightEaves);
   pushMetricMatch(matches, "planning.rules.max_height_ridge_m", heightRidge);
-  pushMetricMatch(matches, "planning.rules.setback_boundary_m", setbackBoundary);
-  pushMetricMatch(matches, "planning.rules.setback_street_m", setbackStreet);
+  pushMetricMatch(
+    matches,
+    "planning.rules.setback_boundary_m",
+    setbackBoundary,
+  );
+  pushMetricMatch(
+    matches,
+    "planning.rules.setback_street_m",
+    setbackStreet,
+  );
 
   const warnings: string[] = [];
   if (matches.length === 0) {
@@ -463,14 +543,30 @@ export function applyPlanningExtractionProposal(
   const appliedFields: string[] = [];
   const conflictFields: string[] = [];
   const warnings = [...result.warnings];
+  const requiresComplementaryDocs =
+    needsComplementaryPlanningDocuments(result);
+  const lowConfidenceWithoutClearSources =
+    result.confidence === "low" && !hasClearPlanningSourceArticles(result);
   const extractionLabel =
     result.sourceType === "pdf"
-      ? `Extracción PDF: ${result.sourceLabel}`
-      : `Extracción URL: ${result.sourceLabel}`;
+      ? `Extraccion PDF: ${result.sourceLabel}`
+      : `Extraccion URL: ${result.sourceLabel}`;
+  const reviewSummaryLines = [
+    result.sourceType === "pdf"
+      ? "PDF leido por IA correctamente."
+      : "Documento de normativa leido correctamente.",
+    ...(requiresComplementaryDocs
+      ? [
+          "Documento insuficiente para la parcela concreta.",
+          "Documentos complementarios requeridos: ficha urbanistica, PGOU, plano de zonificacion o ambito aplicable.",
+        ]
+      : []),
+  ];
 
   if (planning.rules_confirmed_by_user) {
     const reviewNotes = appendText(planning.review_notes, [
       extractionLabel,
+      ...reviewSummaryLines,
       "La normativa ya estaba confirmada por el usuario. No se han sobrescrito valores.",
       ...(result.reviewNotes ?? []),
       ...warnings,
@@ -489,164 +585,177 @@ export function applyPlanningExtractionProposal(
     };
   }
 
-  if (hasText(result.zone)) {
-    if (!hasText(planning.zone)) {
-      nextPlanning.zone = result.zone;
-      appliedFields.push("planning.zone");
-    } else if (planning.zone !== result.zone) {
-      conflictFields.push("planning.zone");
-      warnings.push(`Conflicto en zona: se mantiene "${planning.zone}".`);
+  if (lowConfidenceWithoutClearSources) {
+    warnings.push(
+      "La interpretacion tiene confianza baja y no aporta source_articles claros. No se aplican campos automaticamente.",
+    );
+  } else {
+    if (hasText(result.zone)) {
+      if (!hasText(planning.zone)) {
+        nextPlanning.zone = result.zone;
+        appliedFields.push("planning.zone");
+      } else if (planning.zone !== result.zone) {
+        conflictFields.push("planning.zone");
+        warnings.push(`Conflicto en zona: se mantiene "${planning.zone}".`);
+      }
     }
-  }
 
-  if (hasText(result.ordinance)) {
-    if (!hasText(planning.ordinance)) {
-      nextPlanning.ordinance = result.ordinance;
-      appliedFields.push("planning.ordinance");
-    } else if (planning.ordinance !== result.ordinance) {
-      conflictFields.push("planning.ordinance");
+    if (hasText(result.ordinance)) {
+      if (!hasText(planning.ordinance)) {
+        nextPlanning.ordinance = result.ordinance;
+        appliedFields.push("planning.ordinance");
+      } else if (planning.ordinance !== result.ordinance) {
+        conflictFields.push("planning.ordinance");
+        warnings.push(
+          `Conflicto en ordenanza: se mantiene "${planning.ordinance}".`,
+        );
+      }
+    }
+
+    const metricMappings: Array<{
+      numericKey:
+        | "buildability_total_m2"
+        | "buildability_above_ground_m2"
+        | "buildability_below_ground_m2"
+        | "max_height_eaves_m"
+        | "max_height_ridge_m"
+        | "setback_boundary_m"
+        | "setback_street_m";
+      displayKey:
+        | "buildability_total_m2_display"
+        | "buildability_above_ground_m2_display"
+        | "buildability_below_ground_m2_display"
+        | "max_height_eaves_m_display"
+        | "max_height_ridge_m_display"
+        | "setback_boundary_m_display"
+        | "setback_street_m_display";
+      label: string;
+    }> = [
+      {
+        numericKey: "buildability_total_m2",
+        displayKey: "buildability_total_m2_display",
+        label: "planning.rules.buildability_total_m2",
+      },
+      {
+        numericKey: "buildability_above_ground_m2",
+        displayKey: "buildability_above_ground_m2_display",
+        label: "planning.rules.buildability_above_ground_m2",
+      },
+      {
+        numericKey: "buildability_below_ground_m2",
+        displayKey: "buildability_below_ground_m2_display",
+        label: "planning.rules.buildability_below_ground_m2",
+      },
+      {
+        numericKey: "max_height_eaves_m",
+        displayKey: "max_height_eaves_m_display",
+        label: "planning.rules.max_height_eaves_m",
+      },
+      {
+        numericKey: "max_height_ridge_m",
+        displayKey: "max_height_ridge_m_display",
+        label: "planning.rules.max_height_ridge_m",
+      },
+      {
+        numericKey: "setback_boundary_m",
+        displayKey: "setback_boundary_m_display",
+        label: "planning.rules.setback_boundary_m",
+      },
+      {
+        numericKey: "setback_street_m",
+        displayKey: "setback_street_m_display",
+        label: "planning.rules.setback_street_m",
+      },
+    ];
+
+    const textMappings: Array<{
+      key: "occupancy" | "max_floors";
+      label: string;
+    }> = [
+      { key: "occupancy", label: "planning.rules.occupancy" },
+      { key: "max_floors", label: "planning.rules.max_floors" },
+    ];
+
+    for (const mapping of metricMappings) {
+      const proposedNumericValue = result.rules[mapping.numericKey] ?? null;
+      const proposedDisplayValue = result.rules[mapping.displayKey] ?? "";
+
+      if (proposedNumericValue === null && !hasText(proposedDisplayValue)) {
+        continue;
+      }
+
+      const currentHasValue = metricFieldHasValue(
+        nextPlanning.rules,
+        mapping.numericKey,
+        mapping.displayKey,
+      );
+
+      if (!currentHasValue) {
+        nextPlanning.rules = {
+          ...nextPlanning.rules,
+          [mapping.numericKey]: proposedNumericValue,
+          [mapping.displayKey]: proposedDisplayValue,
+        };
+        appliedFields.push(mapping.label);
+        continue;
+      }
+
+      if (
+        sameMetricValue(
+          nextPlanning.rules[mapping.numericKey] as number | null,
+          nextPlanning.rules[mapping.displayKey] as string,
+          proposedNumericValue,
+          proposedDisplayValue,
+        )
+      ) {
+        nextPlanning.rules = {
+          ...nextPlanning.rules,
+          [mapping.numericKey]: proposedNumericValue,
+          [mapping.displayKey]: proposedDisplayValue,
+        };
+        continue;
+      }
+
+      conflictFields.push(mapping.label);
       warnings.push(
-        `Conflicto en ordenanza: se mantiene "${planning.ordinance}".`,
+        `Conflicto en ${mapping.label}: se mantiene el valor manual.`,
       );
     }
-  }
 
-  const metricMappings: Array<{
-    numericKey:
-      | "buildability_total_m2"
-      | "buildability_above_ground_m2"
-      | "buildability_below_ground_m2"
-      | "max_height_eaves_m"
-      | "max_height_ridge_m"
-      | "setback_boundary_m"
-      | "setback_street_m";
-    displayKey:
-      | "buildability_total_m2_display"
-      | "buildability_above_ground_m2_display"
-      | "buildability_below_ground_m2_display"
-      | "max_height_eaves_m_display"
-      | "max_height_ridge_m_display"
-      | "setback_boundary_m_display"
-      | "setback_street_m_display";
-    label: string;
-  }> = [
-    {
-      numericKey: "buildability_total_m2",
-      displayKey: "buildability_total_m2_display",
-      label: "planning.rules.buildability_total_m2",
-    },
-    {
-      numericKey: "buildability_above_ground_m2",
-      displayKey: "buildability_above_ground_m2_display",
-      label: "planning.rules.buildability_above_ground_m2",
-    },
-    {
-      numericKey: "buildability_below_ground_m2",
-      displayKey: "buildability_below_ground_m2_display",
-      label: "planning.rules.buildability_below_ground_m2",
-    },
-    {
-      numericKey: "max_height_eaves_m",
-      displayKey: "max_height_eaves_m_display",
-      label: "planning.rules.max_height_eaves_m",
-    },
-    {
-      numericKey: "max_height_ridge_m",
-      displayKey: "max_height_ridge_m_display",
-      label: "planning.rules.max_height_ridge_m",
-    },
-    {
-      numericKey: "setback_boundary_m",
-      displayKey: "setback_boundary_m_display",
-      label: "planning.rules.setback_boundary_m",
-    },
-    {
-      numericKey: "setback_street_m",
-      displayKey: "setback_street_m_display",
-      label: "planning.rules.setback_street_m",
-    },
-  ];
+    for (const mapping of textMappings) {
+      const proposedValue = result.rules[mapping.key] ?? "";
+      if (!hasText(proposedValue)) {
+        continue;
+      }
 
-  const textMappings: Array<{
-    key: "occupancy" | "max_floors";
-    label: string;
-  }> = [
-    { key: "occupancy", label: "planning.rules.occupancy" },
-    { key: "max_floors", label: "planning.rules.max_floors" },
-  ];
+      const currentValue = nextPlanning.rules[mapping.key];
+      if (!hasText(currentValue)) {
+        nextPlanning.rules = {
+          ...nextPlanning.rules,
+          [mapping.key]: proposedValue,
+        };
+        appliedFields.push(mapping.label);
+        continue;
+      }
 
-  for (const mapping of metricMappings) {
-    const proposedNumericValue = result.rules[mapping.numericKey] ?? null;
-    const proposedDisplayValue = result.rules[mapping.displayKey] ?? "";
-
-    if (proposedNumericValue === null && !hasText(proposedDisplayValue)) {
-      continue;
-    }
-
-    const currentHasValue = metricFieldHasValue(
-      nextPlanning.rules,
-      mapping.numericKey,
-      mapping.displayKey,
-    );
-
-    if (!currentHasValue) {
-      nextPlanning.rules = {
-        ...nextPlanning.rules,
-        [mapping.numericKey]: proposedNumericValue,
-        [mapping.displayKey]: proposedDisplayValue,
-      };
-      appliedFields.push(mapping.label);
-      continue;
-    }
-
-    if (
-      sameMetricValue(
-        nextPlanning.rules[mapping.numericKey] as number | null,
-        nextPlanning.rules[mapping.displayKey] as string,
-        proposedNumericValue,
-        proposedDisplayValue,
-      )
-    ) {
-      nextPlanning.rules = {
-        ...nextPlanning.rules,
-        [mapping.numericKey]: proposedNumericValue,
-        [mapping.displayKey]: proposedDisplayValue,
-      };
-      continue;
-    }
-
-    conflictFields.push(mapping.label);
-    warnings.push(`Conflicto en ${mapping.label}: se mantiene el valor manual.`);
-  }
-
-  for (const mapping of textMappings) {
-    const proposedValue = result.rules[mapping.key] ?? "";
-    if (!hasText(proposedValue)) {
-      continue;
-    }
-
-    const currentValue = nextPlanning.rules[mapping.key];
-    if (!hasText(currentValue)) {
-      nextPlanning.rules = {
-        ...nextPlanning.rules,
-        [mapping.key]: proposedValue,
-      };
-      appliedFields.push(mapping.label);
-      continue;
-    }
-
-    if (currentValue.trim() !== proposedValue.trim()) {
-      conflictFields.push(mapping.label);
-      warnings.push(`Conflicto en ${mapping.label}: se mantiene el valor manual.`);
+      if (currentValue.trim() !== proposedValue.trim()) {
+        conflictFields.push(mapping.label);
+        warnings.push(
+          `Conflicto en ${mapping.label}: se mantiene el valor manual.`,
+        );
+      }
     }
   }
 
   const reviewNotes = appendText(planning.review_notes, [
     extractionLabel,
+    ...reviewSummaryLines,
     `Confianza estimada: ${result.confidence}.`,
     appliedFields.length > 0
       ? `Campos propuestos aplicados: ${appliedFields.join(", ")}`
-      : "No se aplicaron campos nuevos automáticamente.",
+      : lowConfidenceWithoutClearSources
+        ? "No se aplicaron campos nuevos automaticamente por confianza baja y falta de citas claras."
+        : "No se aplicaron campos nuevos automaticamente.",
     ...(result.reviewNotes ?? []),
     ...warnings,
   ]);
