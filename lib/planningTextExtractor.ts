@@ -5,7 +5,11 @@ import {
 } from "./planningNormalizer";
 import type {
   PlanningBlock,
+  PlanningListRuleProposal,
+  PlanningNumericRuleProposal,
+  PlanningRuleProposalStatus,
   PlanningRules,
+  PlanningRulesProposal,
   PlanningSourceArticle,
 } from "./projectInputSchema";
 
@@ -27,6 +31,7 @@ export interface PlanningExtractionResult {
   zone: string;
   ordinance: string;
   rules: Partial<PlanningRules>;
+  rulesProposal: PlanningRulesProposal;
   rawMatches: ExtractedPlanningMatch[];
   warnings: string[];
   sourceArticles: PlanningSourceArticle[];
@@ -37,6 +42,13 @@ export interface AppliedPlanningExtraction {
   planning: PlanningBlock;
   appliedFields: string[];
   conflictFields: string[];
+  warnings: string[];
+}
+
+export interface AppliedPlanningRulesProposal {
+  planning: PlanningBlock;
+  appliedFields: string[];
+  skippedFields: string[];
   warnings: string[];
 }
 
@@ -245,6 +257,229 @@ function extractMetricFromLines(
   return null;
 }
 
+function extractMetricFromLinesWithRegex(
+  lines: string[],
+  keywords: string[],
+  regex: RegExp,
+): MetricExtraction | null {
+  for (const line of lines) {
+    const normalized = line.toLocaleLowerCase("es");
+    if (!keywords.some((keyword) => normalized.includes(keyword))) {
+      continue;
+    }
+
+    const normalizedLine = normalizeLine(line);
+    const match = normalizedLine.match(regex);
+    if (!match) {
+      continue;
+    }
+
+    const displayValue = match[0].replace(/\s+/g, " ").trim();
+    const numericToken = displayValue.match(/\d+(?:[.,]\d+)?/)?.[0] ?? "";
+    const numericValue = parseMetricNumber(numericToken);
+    if (numericValue === null) {
+      continue;
+    }
+
+    return {
+      displayValue,
+      numericValue,
+      snippet: normalizedLine,
+      confidence: confidenceFromKeywords(line, keywords),
+    };
+  }
+
+  return null;
+}
+
+function emptyNumericRuleProposal(): PlanningNumericRuleProposal {
+  return {
+    value: null,
+    confidence: "low",
+    source_excerpt: "",
+    status: "proposed",
+  };
+}
+
+function emptyListRuleProposal(): PlanningListRuleProposal {
+  return {
+    values: [],
+    confidence: "low",
+    source_excerpt: "",
+    status: "proposed",
+  };
+}
+
+function normalizeProposalStatus(
+  status: PlanningRuleProposalStatus | null | undefined,
+): PlanningRuleProposalStatus {
+  return status ?? "proposed";
+}
+
+function buildNumericRuleProposal(
+  extraction: MetricExtraction | null,
+): PlanningNumericRuleProposal {
+  if (!extraction) {
+    return emptyNumericRuleProposal();
+  }
+
+  return {
+    value: extraction.numericValue,
+    confidence: extraction.confidence,
+    source_excerpt: extraction.snippet,
+    status: "proposed",
+  };
+}
+
+function extractFloorCount(
+  textExtraction: TextExtraction | null,
+): PlanningNumericRuleProposal {
+  if (!textExtraction) {
+    return emptyNumericRuleProposal();
+  }
+
+  const match = textExtraction.value.match(/\d+(?:[.,]\d+)?/);
+  if (!match) {
+    return {
+      value: null,
+      confidence: textExtraction.confidence,
+      source_excerpt: textExtraction.snippet,
+      status: "proposed",
+    };
+  }
+
+  return {
+    value: parseMetricNumber(match[0]),
+    confidence: textExtraction.confidence,
+    source_excerpt: textExtraction.snippet,
+    status: "proposed",
+  };
+}
+
+function splitRuleListValues(value: string): string[] {
+  return uniqueStrings(
+    value
+      .split(/[,;]|\by\b/gi)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+}
+
+function extractListRuleProposal(
+  lines: string[],
+  keywords: string[],
+): PlanningListRuleProposal {
+  const extraction = extractTextFieldFromLines(lines, keywords);
+  if (!extraction) {
+    return emptyListRuleProposal();
+  }
+
+  return {
+    values: splitRuleListValues(extraction.value),
+    confidence: extraction.confidence,
+    source_excerpt: extraction.snippet,
+    status: "proposed",
+  };
+}
+
+export function extractPlanningRulesProposalFromText(
+  text: string,
+): PlanningRulesProposal {
+  const lines = splitTextIntoLines(text);
+  const buildabilityRatio = extractMetricFromLinesWithRegex(
+    lines,
+    [
+      "edificabilidad",
+      "aprovechamiento",
+      "indice de edificabilidad",
+      "indice de aprovechamiento",
+    ],
+    /\d+(?:[.,]\d+)?\s*(?:m2|m²)\s*\/\s*(?:m2|m²)/i,
+  );
+  const occupancyPercent = extractMetricFromLinesWithRegex(
+    lines,
+    ["ocupacion maxima", "ocupacion", "porcentaje de ocupacion"],
+    /\d+(?:[.,]\d+)?\s*%/i,
+  );
+  const maxHeightMetric =
+    extractMetricFromLines(
+      lines,
+      ["altura maxima", "altura total", "altura reguladora"],
+      "m",
+    ) ??
+    extractMetricFromLines(lines, ["altura a cumbrera", "cumbrera"], "m") ??
+    extractMetricFromLines(lines, ["altura al alero", "alero"], "m");
+  const maxFloors = extractTextFieldFromLines(
+    lines,
+    [
+      "numero maximo de plantas",
+      "maximo de plantas",
+      "plantas maximas",
+      "alturas",
+    ],
+  );
+  const setbackFront = extractMetricFromLines(
+    lines,
+    [
+      "retranqueo frontal",
+      "retranqueo a calle",
+      "retranqueo a vial",
+      "alineacion",
+      "frente",
+      "fachada principal",
+    ],
+    "m",
+  );
+  const setbackRear = extractMetricFromLines(
+    lines,
+    [
+      "retranqueo posterior",
+      "retranqueo trasero",
+      "retranqueo al fondo",
+      "fondo de parcela",
+      "fondo",
+    ],
+    "m",
+  );
+  const setbackSide = extractMetricFromLines(
+    lines,
+    [
+      "retranqueo lateral",
+      "retranqueo a linderos",
+      "retranqueo a lindero",
+      "lateral",
+      "lindero",
+      "linderos",
+    ],
+    "m",
+  );
+
+  return {
+    max_height_m: buildNumericRuleProposal(maxHeightMetric),
+    max_floors: extractFloorCount(maxFloors),
+    buildability_m2_m2: buildNumericRuleProposal(buildabilityRatio),
+    occupancy_percent: buildNumericRuleProposal(occupancyPercent),
+    setbacks: {
+      front_m: buildNumericRuleProposal(setbackFront),
+      rear_m: buildNumericRuleProposal(setbackRear),
+      side_m: buildNumericRuleProposal(setbackSide),
+    },
+    uses_allowed: extractListRuleProposal(lines, [
+      "usos permitidos",
+      "uso permitido",
+      "usos autorizados",
+      "uso caracteristico",
+      "uso compatible",
+    ]),
+    uses_forbidden: extractListRuleProposal(lines, [
+      "usos prohibidos",
+      "uso prohibido",
+      "usos incompatibles",
+      "uso no permitido",
+    ]),
+  };
+}
+
 function extractTextFieldFromLines(
   lines: string[],
   keywords: string[],
@@ -329,6 +564,7 @@ export function extractPlanningRulesFromText(
 ): PlanningExtractionResult {
   const lines = splitTextIntoLines(text);
   const matches: ExtractedPlanningMatch[] = [];
+  const rulesProposal = extractPlanningRulesProposalFromText(text);
 
   const zone = extractTextFieldFromLines(lines, ["zona urban", "zona:"]);
   const ordinance = extractTextFieldFromLines(lines, ["ordenanza", "ord."]);
@@ -491,42 +727,12 @@ export function extractPlanningRulesFromText(
           ? formatMeters(setbackStreet.numericValue)
           : "",
     },
+    rulesProposal,
     rawMatches: matches,
     warnings,
     sourceArticles,
     reviewNotes: [],
   };
-}
-
-function metricFieldHasValue(
-  rules: PlanningRules,
-  key: keyof PlanningRules,
-  displayKey: keyof PlanningRules,
-): boolean {
-  const numericValue = rules[key];
-  const displayValue = rules[displayKey];
-
-  return (
-    typeof numericValue === "number" ||
-    (typeof displayValue === "string" && displayValue.trim().length > 0)
-  );
-}
-
-function sameMetricValue(
-  currentNumericValue: number | null,
-  currentDisplayValue: string,
-  proposedNumericValue: number | null,
-  proposedDisplayValue: string,
-): boolean {
-  if (
-    typeof currentNumericValue === "number" &&
-    typeof proposedNumericValue === "number" &&
-    Math.abs(currentNumericValue - proposedNumericValue) < 0.0001
-  ) {
-    return true;
-  }
-
-  return currentDisplayValue.trim() === proposedDisplayValue.trim();
 }
 
 export function applyPlanningExtractionProposal(
@@ -535,6 +741,7 @@ export function applyPlanningExtractionProposal(
 ): AppliedPlanningExtraction {
   const nextPlanning: PlanningBlock = {
     ...planning,
+    rules_proposal: result.rulesProposal,
     source_articles: uniqueSourceArticles([
       ...planning.source_articles,
       ...result.sourceArticles,
@@ -611,140 +818,6 @@ export function applyPlanningExtractionProposal(
         );
       }
     }
-
-    const metricMappings: Array<{
-      numericKey:
-        | "buildability_total_m2"
-        | "buildability_above_ground_m2"
-        | "buildability_below_ground_m2"
-        | "max_height_eaves_m"
-        | "max_height_ridge_m"
-        | "setback_boundary_m"
-        | "setback_street_m";
-      displayKey:
-        | "buildability_total_m2_display"
-        | "buildability_above_ground_m2_display"
-        | "buildability_below_ground_m2_display"
-        | "max_height_eaves_m_display"
-        | "max_height_ridge_m_display"
-        | "setback_boundary_m_display"
-        | "setback_street_m_display";
-      label: string;
-    }> = [
-      {
-        numericKey: "buildability_total_m2",
-        displayKey: "buildability_total_m2_display",
-        label: "planning.rules.buildability_total_m2",
-      },
-      {
-        numericKey: "buildability_above_ground_m2",
-        displayKey: "buildability_above_ground_m2_display",
-        label: "planning.rules.buildability_above_ground_m2",
-      },
-      {
-        numericKey: "buildability_below_ground_m2",
-        displayKey: "buildability_below_ground_m2_display",
-        label: "planning.rules.buildability_below_ground_m2",
-      },
-      {
-        numericKey: "max_height_eaves_m",
-        displayKey: "max_height_eaves_m_display",
-        label: "planning.rules.max_height_eaves_m",
-      },
-      {
-        numericKey: "max_height_ridge_m",
-        displayKey: "max_height_ridge_m_display",
-        label: "planning.rules.max_height_ridge_m",
-      },
-      {
-        numericKey: "setback_boundary_m",
-        displayKey: "setback_boundary_m_display",
-        label: "planning.rules.setback_boundary_m",
-      },
-      {
-        numericKey: "setback_street_m",
-        displayKey: "setback_street_m_display",
-        label: "planning.rules.setback_street_m",
-      },
-    ];
-
-    const textMappings: Array<{
-      key: "occupancy" | "max_floors";
-      label: string;
-    }> = [
-      { key: "occupancy", label: "planning.rules.occupancy" },
-      { key: "max_floors", label: "planning.rules.max_floors" },
-    ];
-
-    for (const mapping of metricMappings) {
-      const proposedNumericValue = result.rules[mapping.numericKey] ?? null;
-      const proposedDisplayValue = result.rules[mapping.displayKey] ?? "";
-
-      if (proposedNumericValue === null && !hasText(proposedDisplayValue)) {
-        continue;
-      }
-
-      const currentHasValue = metricFieldHasValue(
-        nextPlanning.rules,
-        mapping.numericKey,
-        mapping.displayKey,
-      );
-
-      if (!currentHasValue) {
-        nextPlanning.rules = {
-          ...nextPlanning.rules,
-          [mapping.numericKey]: proposedNumericValue,
-          [mapping.displayKey]: proposedDisplayValue,
-        };
-        appliedFields.push(mapping.label);
-        continue;
-      }
-
-      if (
-        sameMetricValue(
-          nextPlanning.rules[mapping.numericKey] as number | null,
-          nextPlanning.rules[mapping.displayKey] as string,
-          proposedNumericValue,
-          proposedDisplayValue,
-        )
-      ) {
-        nextPlanning.rules = {
-          ...nextPlanning.rules,
-          [mapping.numericKey]: proposedNumericValue,
-          [mapping.displayKey]: proposedDisplayValue,
-        };
-        continue;
-      }
-
-      conflictFields.push(mapping.label);
-      warnings.push(
-        `Conflicto en ${mapping.label}: se mantiene el valor manual.`,
-      );
-    }
-
-    for (const mapping of textMappings) {
-      const proposedValue = result.rules[mapping.key] ?? "";
-      if (!hasText(proposedValue)) {
-        continue;
-      }
-
-      const currentValue = nextPlanning.rules[mapping.key];
-      if (!hasText(currentValue)) {
-        nextPlanning.rules = {
-          ...nextPlanning.rules,
-          [mapping.key]: proposedValue,
-        };
-        appliedFields.push(mapping.label);
-        continue;
-      }
-
-      if (currentValue.trim() !== proposedValue.trim()) {
-        conflictFields.push(mapping.label);
-        warnings.push(
-          `Conflicto en ${mapping.label}: se mantiene el valor manual.`,
-        );
-      }
-    }
   }
 
   const reviewNotes = appendText(planning.review_notes, [
@@ -756,6 +829,7 @@ export function applyPlanningExtractionProposal(
       : lowConfidenceWithoutClearSources
         ? "No se aplicaron campos nuevos automaticamente por confianza baja y falta de citas claras."
         : "No se aplicaron campos nuevos automaticamente.",
+    "Las reglas detectadas se han guardado en planning.rules_proposal y requieren revision humana antes de aplicarse a planning.rules.",
     ...(result.reviewNotes ?? []),
     ...warnings,
   ]);
@@ -769,6 +843,106 @@ export function applyPlanningExtractionProposal(
     },
     appliedFields,
     conflictFields,
+    warnings,
+  };
+}
+
+function formatPercent(value: number): string {
+  return Number.isInteger(value) ? `${value}%` : `${value.toFixed(2)}%`;
+}
+
+function isRuleAccepted(status: PlanningRuleProposalStatus): boolean {
+  return status === "accepted";
+}
+
+export function applyAcceptedPlanningRulesProposal(
+  planning: PlanningBlock,
+): AppliedPlanningRulesProposal {
+  const nextPlanning: PlanningBlock = {
+    ...planning,
+    rules: {
+      ...planning.rules,
+    },
+  };
+  const appliedFields: string[] = [];
+  const skippedFields: string[] = [];
+  const warnings: string[] = [];
+  const proposal = planning.rules_proposal;
+
+  if (
+    isRuleAccepted(proposal.max_floors.status) &&
+    typeof proposal.max_floors.value === "number"
+  ) {
+    nextPlanning.rules.max_floors = String(proposal.max_floors.value);
+    appliedFields.push("planning.rules.max_floors");
+  }
+
+  if (
+    isRuleAccepted(proposal.occupancy_percent.status) &&
+    typeof proposal.occupancy_percent.value === "number"
+  ) {
+    nextPlanning.rules.occupancy = formatPercent(proposal.occupancy_percent.value);
+    appliedFields.push("planning.rules.occupancy");
+  }
+
+  if (
+    isRuleAccepted(proposal.setbacks.front_m.status) &&
+    typeof proposal.setbacks.front_m.value === "number"
+  ) {
+    nextPlanning.rules.setback_street_m = proposal.setbacks.front_m.value;
+    nextPlanning.rules.setback_street_m_display = formatMeters(
+      proposal.setbacks.front_m.value,
+    );
+    appliedFields.push("planning.rules.setback_street_m");
+  }
+
+  if (
+    isRuleAccepted(proposal.setbacks.side_m.status) ||
+    isRuleAccepted(proposal.setbacks.rear_m.status)
+  ) {
+    skippedFields.push("planning.rules.setback_boundary_m");
+    warnings.push(
+      "Los retranqueos lateral y trasero no se aplican automaticamente a setback_boundary_m sin revision manual.",
+    );
+  }
+
+  if (isRuleAccepted(proposal.max_height_m.status)) {
+    skippedFields.push("planning.rules.max_height_eaves_m");
+    skippedFields.push("planning.rules.max_height_ridge_m");
+    warnings.push(
+      "La altura maxima propuesta no se aplica automaticamente a alero o cumbrera sin elegir destino.",
+    );
+  }
+
+  if (isRuleAccepted(proposal.buildability_m2_m2.status)) {
+    skippedFields.push("planning.rules.buildability_total_m2");
+    warnings.push(
+      "La edificabilidad m2/m2 no se aplica automaticamente a buildability_total_m2.",
+    );
+  }
+
+  if (
+    isRuleAccepted(proposal.uses_allowed.status) ||
+    isRuleAccepted(proposal.uses_forbidden.status)
+  ) {
+    warnings.push(
+      "Los usos permitidos/prohibidos se conservan en planning.rules_proposal porque no existe un campo final equivalente en planning.rules.",
+    );
+  }
+
+  nextPlanning.status = "processed_needs_review";
+  nextPlanning.rules_confirmed_by_user = false;
+  nextPlanning.review_notes = appendText(planning.review_notes, [
+    appliedFields.length > 0
+      ? `Se aplicaron reglas aceptadas a planning.rules: ${appliedFields.join(", ")}`
+      : "No habia reglas aceptadas con mapeo automatico seguro.",
+    ...warnings,
+  ]);
+
+  return {
+    planning: nextPlanning,
+    appliedFields,
+    skippedFields,
     warnings,
   };
 }

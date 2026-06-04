@@ -7,9 +7,15 @@ import {
   GRAPHIC_TYPES,
   LAYOUT_PLAN_STATUSES,
   OVERFLOW_POLICIES,
+  PLANNING_RULE_CONFIDENCES,
+  PLANNING_RULE_PROPOSAL_STATUSES,
   WORKFLOW_STATUSES,
   type AssetCategory,
   type AssetsBlock,
+  type PlanningListRuleProposal,
+  type PlanningNumericRuleProposal,
+  type PlanningRuleConfidence,
+  type PlanningRuleProposalStatus,
   type DossieresWebhookPayload,
   type AnalysisStatus,
   type GraphicFormat,
@@ -18,6 +24,7 @@ import {
   type GraphicType,
   type LayoutPlanStatus,
   type OverflowPolicy,
+  type PlanningRulesProposal,
   type PlanningSourceArticle,
   type PlanningStatus,
   type ProjectInputV2,
@@ -191,6 +198,24 @@ function normalizeGraphicFormat(format: unknown): GraphicFormat {
     : "svg";
 }
 
+function normalizePlanningRuleConfidence(
+  confidence: unknown,
+): PlanningRuleConfidence {
+  return PLANNING_RULE_CONFIDENCES.includes(confidence as PlanningRuleConfidence)
+    ? (confidence as PlanningRuleConfidence)
+    : "low";
+}
+
+function normalizePlanningRuleProposalStatus(
+  status: unknown,
+): PlanningRuleProposalStatus {
+  return PLANNING_RULE_PROPOSAL_STATUSES.includes(
+    status as PlanningRuleProposalStatus,
+  )
+    ? (status as PlanningRuleProposalStatus)
+    : "proposed";
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -199,6 +224,99 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function normalizeNumericRuleProposal(
+  seed: unknown,
+  base: PlanningNumericRuleProposal,
+): PlanningNumericRuleProposal {
+  if (typeof seed !== "object" || seed === null || Array.isArray(seed)) {
+    return base;
+  }
+
+  const candidate = seed as Record<string, unknown>;
+
+  return {
+    value: typeof candidate.value === "number" ? candidate.value : null,
+    confidence: normalizePlanningRuleConfidence(candidate.confidence),
+    source_excerpt: stringValue(candidate.source_excerpt),
+    status: normalizePlanningRuleProposalStatus(candidate.status),
+  };
+}
+
+function normalizeListRuleProposal(
+  seed: unknown,
+  base: PlanningListRuleProposal,
+): PlanningListRuleProposal {
+  if (typeof seed !== "object" || seed === null || Array.isArray(seed)) {
+    return base;
+  }
+
+  const candidate = seed as Record<string, unknown>;
+
+  return {
+    values: stringArray(candidate.values),
+    confidence: normalizePlanningRuleConfidence(candidate.confidence),
+    source_excerpt: stringValue(candidate.source_excerpt),
+    status: normalizePlanningRuleProposalStatus(candidate.status),
+  };
+}
+
+function normalizePlanningRulesProposal(
+  seed: unknown,
+  base: PlanningRulesProposal,
+): PlanningRulesProposal {
+  const candidate =
+    typeof seed === "object" && seed !== null && !Array.isArray(seed)
+      ? (seed as Record<string, unknown>)
+      : {};
+  const candidateSetbacks =
+    typeof candidate.setbacks === "object" &&
+    candidate.setbacks !== null &&
+    !Array.isArray(candidate.setbacks)
+      ? (candidate.setbacks as Record<string, unknown>)
+      : {};
+
+  return {
+    max_height_m: normalizeNumericRuleProposal(
+      candidate.max_height_m,
+      base.max_height_m,
+    ),
+    max_floors: normalizeNumericRuleProposal(
+      candidate.max_floors,
+      base.max_floors,
+    ),
+    buildability_m2_m2: normalizeNumericRuleProposal(
+      candidate.buildability_m2_m2,
+      base.buildability_m2_m2,
+    ),
+    occupancy_percent: normalizeNumericRuleProposal(
+      candidate.occupancy_percent,
+      base.occupancy_percent,
+    ),
+    setbacks: {
+      front_m: normalizeNumericRuleProposal(
+        candidateSetbacks.front_m,
+        base.setbacks.front_m,
+      ),
+      rear_m: normalizeNumericRuleProposal(
+        candidateSetbacks.rear_m,
+        base.setbacks.rear_m,
+      ),
+      side_m: normalizeNumericRuleProposal(
+        candidateSetbacks.side_m,
+        base.setbacks.side_m,
+      ),
+    },
+    uses_allowed: normalizeListRuleProposal(
+      candidate.uses_allowed,
+      base.uses_allowed,
+    ),
+    uses_forbidden: normalizeListRuleProposal(
+      candidate.uses_forbidden,
+      base.uses_forbidden,
+    ),
+  };
 }
 
 function normalizePlanningSourceArticles(
@@ -434,6 +552,10 @@ export function buildProjectInput(
         ...base.planning.rules,
         ...seed?.planning?.rules,
       },
+      rules_proposal: normalizePlanningRulesProposal(
+        seed?.planning?.rules_proposal,
+        base.planning.rules_proposal,
+      ),
       source_articles: normalizePlanningSourceArticles(
         seed?.planning?.source_articles ?? base.planning.source_articles,
       ),

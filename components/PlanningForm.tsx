@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { normalizeUploadedFile } from "@/lib/normalizeUploadedFile";
 import {
+  applyAcceptedPlanningRulesProposal,
   applyPlanningExtractionProposal,
   hasClearPlanningSourceArticles,
   needsComplementaryPlanningDocuments,
@@ -12,7 +13,11 @@ import type { PlanningLinkCandidate } from "@/lib/planningUrlCandidates";
 import type {
   AssetsBlock,
   PlanningBlock,
+  PlanningListRuleProposal,
+  PlanningNumericRuleProposal,
+  PlanningRuleProposalStatus,
   PlanningRules,
+  PlanningRulesProposal,
   SiteBlock,
   UploadedAsset,
 } from "@/lib/projectInputSchema";
@@ -102,6 +107,25 @@ function buildPlanningGuidance(
   };
 }
 
+function statusLabel(status: PlanningRuleProposalStatus): string {
+  switch (status) {
+    case "accepted":
+      return "Aceptada";
+    case "rejected":
+      return "Rechazada";
+    case "edited":
+      return "Editada";
+    default:
+      return "Propuesta";
+  }
+}
+
+function nextEditedStatus(
+  current: PlanningRuleProposalStatus,
+): PlanningRuleProposalStatus {
+  return current === "accepted" ? "accepted" : "edited";
+}
+
 export function PlanningForm({
   assets,
   planning,
@@ -167,6 +191,88 @@ export function PlanningForm({
     }
   }
 
+  function updateRulesProposal(nextRulesProposal: PlanningRulesProposal) {
+    onChange({
+      planning: {
+        ...planning,
+        status: "processed_needs_review",
+        rules_confirmed_by_user: false,
+        rules_proposal: nextRulesProposal,
+      },
+    });
+  }
+
+  function changeRulesProposal(patch: Partial<PlanningRulesProposal>) {
+    updateRulesProposal({
+      ...planning.rules_proposal,
+      ...patch,
+      setbacks: {
+        ...planning.rules_proposal.setbacks,
+        ...patch.setbacks,
+      },
+    });
+  }
+
+  function changeNumericProposal(
+    key: Exclude<
+      keyof PlanningRulesProposal,
+      "setbacks" | "uses_allowed" | "uses_forbidden"
+    >,
+    patch: Partial<PlanningNumericRuleProposal>,
+  ) {
+    changeRulesProposal({
+      [key]: {
+        ...planning.rules_proposal[key],
+        ...patch,
+        status:
+          patch.status ??
+          nextEditedStatus(planning.rules_proposal[key].status),
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function changeSetbackProposal(
+    key: keyof PlanningRulesProposal["setbacks"],
+    patch: Partial<PlanningNumericRuleProposal>,
+  ) {
+    changeRulesProposal({
+      setbacks: {
+        [key]: {
+          ...planning.rules_proposal.setbacks[key],
+          ...patch,
+          status:
+            patch.status ??
+            nextEditedStatus(planning.rules_proposal.setbacks[key].status),
+        },
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function changeListProposal(
+    key: "uses_allowed" | "uses_forbidden",
+    patch: Partial<PlanningListRuleProposal>,
+  ) {
+    changeRulesProposal({
+      [key]: {
+        ...planning.rules_proposal[key],
+        ...patch,
+        status:
+          patch.status ??
+          nextEditedStatus(planning.rules_proposal[key].status),
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function parseNumericInput(value: string): number | null {
+    const normalized = value.replace(",", ".").trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function applyExtractionResult(
     sourceLabel: string,
     extraction: PlanningExtractionResult,
@@ -195,13 +301,6 @@ export function PlanningForm({
       return;
     }
 
-    if (applied.appliedFields.length > 0) {
-      setMessage(
-        `Normativa extraida desde ${sourceLabel}. Revisa los valores antes de confirmar.`,
-      );
-      return;
-    }
-
     if (extraction.confidence === "low" && !hasClearSources) {
       setMessage(
         "La lectura del PDF es de confianza baja y no aporta citas claras. Revisa las notas y busca documentacion complementaria.",
@@ -209,17 +308,26 @@ export function PlanningForm({
       return;
     }
 
-    if (
-      applied.conflictFields.length > 0 ||
-      planningBase.rules_confirmed_by_user
-    ) {
+    setMessage(
+      `Normativa extraida desde ${sourceLabel}. Revisa, acepta o rechaza las reglas detectadas antes de aplicarlas a la normativa final.`,
+    );
+  }
+
+  function applyAcceptedRules() {
+    const applied = applyAcceptedPlanningRulesProposal(planning);
+    changePlanning(applied.planning);
+
+    if (applied.appliedFields.length > 0) {
       setMessage(
-        "Se detectaron valores, pero se han mantenido los existentes. Revisa las notas de normativa.",
+        `Se aplicaron reglas aceptadas: ${applied.appliedFields.join(", ")}.`,
       );
       return;
     }
 
-    setMessage("Se analizo la normativa, pero no habia campos nuevos que aplicar.");
+    setMessage(
+      applied.warnings[0] ||
+        "No habia reglas aceptadas con equivalencias seguras para aplicar.",
+    );
   }
 
   async function extractFromPdf() {
@@ -362,7 +470,7 @@ export function PlanningForm({
       setLinkCandidates(payload.candidates ?? []);
       setMessage(
         (payload.candidates?.length ?? 0) > 0
-          ? "Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela."
+          ? "Se han encontrado posibles documentos complementarios. Revisa y elige la fuente mas fiable."
           : payload.warnings?.[0] ||
               "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
       );
@@ -378,7 +486,11 @@ export function PlanningForm({
   }
 
   function useLinkCandidate(candidate: PlanningLinkCandidate) {
-    changePlanning({ planning_url: candidate.url });
+    changePlanning({
+      planning_url: candidate.url,
+      status: "processed_needs_review",
+      rules_confirmed_by_user: false,
+    });
     setMessage(
       "Se ha seleccionado un documento candidato. Revisa la URL y ejecuta Extraer normativa de URL cuando quieras analizarlo.",
     );
@@ -404,6 +516,35 @@ export function PlanningForm({
     } finally {
       setProcessingCandidateUrl("");
     }
+  }
+
+  function renderProposalActions(
+    title: string,
+    status: PlanningRuleProposalStatus,
+    onAccept: () => void,
+    onReject: () => void,
+  ) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="rounded-full border border-line bg-white px-2 py-1 text-xs font-semibold text-ink">
+          {title}: {statusLabel(status)}
+        </span>
+        <button
+          className="rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink"
+          type="button"
+          onClick={onAccept}
+        >
+          Aceptar
+        </button>
+        <button
+          className="rounded-md border border-line bg-soft px-3 py-1.5 text-xs font-semibold text-ink"
+          type="button"
+          onClick={onReject}
+        >
+          Rechazar
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -576,6 +717,273 @@ export function PlanningForm({
             }
           />
         </label>
+
+        <div className="md:col-span-2 rounded-md border border-line bg-soft/60 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-ink">
+                Reglas detectadas para revision humana
+              </p>
+              <p className="mt-1 text-xs text-ink/70">
+                Revisa cada propuesta, acepta o rechaza, y luego aplica solo las equivalencias seguras a la normativa final.
+              </p>
+            </div>
+            <button
+              className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink"
+              type="button"
+              onClick={applyAcceptedRules}
+            >
+              Aplicar reglas aceptadas a normativa
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <label>
+              <span className="label">Edificabilidad m2/m2</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.buildability_m2_m2.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("buildability_m2_m2", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.buildability_m2_m2.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.buildability_m2_m2.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.buildability_m2_m2.status,
+                () => changeNumericProposal("buildability_m2_m2", { status: "accepted" }),
+                () => changeNumericProposal("buildability_m2_m2", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Ocupacion %</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.occupancy_percent.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("occupancy_percent", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.occupancy_percent.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.occupancy_percent.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.occupancy_percent.status,
+                () => changeNumericProposal("occupancy_percent", { status: "accepted" }),
+                () => changeNumericProposal("occupancy_percent", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Altura maxima (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.max_height_m.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("max_height_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.max_height_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.max_height_m.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.max_height_m.status,
+                () => changeNumericProposal("max_height_m", { status: "accepted" }),
+                () => changeNumericProposal("max_height_m", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Numero maximo de plantas</span>
+              <input
+                className="field"
+                type="number"
+                step="1"
+                value={planning.rules_proposal.max_floors.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("max_floors", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.max_floors.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.max_floors.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.max_floors.status,
+                () => changeNumericProposal("max_floors", { status: "accepted" }),
+                () => changeNumericProposal("max_floors", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Retranqueo frontal (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.setbacks.front_m.value ?? ""}
+                onChange={(event) =>
+                  changeSetbackProposal("front_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.setbacks.front_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.setbacks.front_m.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.setbacks.front_m.status,
+                () => changeSetbackProposal("front_m", { status: "accepted" }),
+                () => changeSetbackProposal("front_m", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Retranqueo trasero (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.setbacks.rear_m.value ?? ""}
+                onChange={(event) =>
+                  changeSetbackProposal("rear_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.setbacks.rear_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.setbacks.rear_m.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.setbacks.rear_m.status,
+                () => changeSetbackProposal("rear_m", { status: "accepted" }),
+                () => changeSetbackProposal("rear_m", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Retranqueo lateral (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.setbacks.side_m.value ?? ""}
+                onChange={(event) =>
+                  changeSetbackProposal("side_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.setbacks.side_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.setbacks.side_m.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.setbacks.side_m.status,
+                () => changeSetbackProposal("side_m", { status: "accepted" }),
+                () => changeSetbackProposal("side_m", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Usos permitidos</span>
+              <textarea
+                className="field min-h-24"
+                value={planning.rules_proposal.uses_allowed.values.join("\n")}
+                onChange={(event) =>
+                  changeListProposal("uses_allowed", {
+                    values: event.target.value
+                      .split(/\r?\n|,/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.uses_allowed.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.uses_allowed.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.uses_allowed.status,
+                () => changeListProposal("uses_allowed", { status: "accepted" }),
+                () => changeListProposal("uses_allowed", { status: "rejected" }),
+              )}
+            </label>
+
+            <label>
+              <span className="label">Usos prohibidos</span>
+              <textarea
+                className="field min-h-24"
+                value={planning.rules_proposal.uses_forbidden.values.join("\n")}
+                onChange={(event) =>
+                  changeListProposal("uses_forbidden", {
+                    values: event.target.value
+                      .split(/\r?\n|,/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.uses_forbidden.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.uses_forbidden.source_excerpt || "Sin extracto"}
+              </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.uses_forbidden.status,
+                () => changeListProposal("uses_forbidden", { status: "accepted" }),
+                () => changeListProposal("uses_forbidden", { status: "rejected" }),
+              )}
+            </label>
+          </div>
+        </div>
 
         <label className="md:col-span-2">
           <span className="label">Review notes</span>
