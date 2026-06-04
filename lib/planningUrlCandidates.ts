@@ -182,6 +182,18 @@ function pushReason(reasons: string[], reason: string) {
   }
 }
 
+function countPlanningKeywordMatches(haystack: string): number {
+  let matches = 0;
+
+  for (const keyword of PLANNING_KEYWORDS) {
+    if (haystack.includes(normalizeText(keyword))) {
+      matches += 1;
+    }
+  }
+
+  return matches;
+}
+
 function scoreOfficialSignals(
   hostname: string,
   pathname: string,
@@ -258,6 +270,30 @@ function scorePenaltySignals(
   return penalty;
 }
 
+function scoreBaseContextSignals(
+  baseUrl: URL | undefined,
+  resolvedUrl: URL,
+  reasons: string[],
+): number {
+  if (!baseUrl || !sameDomain(baseUrl, resolvedUrl)) {
+    return 0;
+  }
+
+  const baseHost = normalizeText(baseUrl.hostname);
+  const basePath = normalizeText(baseUrl.pathname);
+  const looksOfficialBase =
+    OFFICIAL_HOST_HINTS.some((hint) => baseHost.includes(hint)) ||
+    OFFICIAL_PATH_HINTS.some((hint) => basePath.includes(hint)) ||
+    /\.(es|eus|cat)$/i.test(baseUrl.hostname);
+
+  if (!looksOfficialBase) {
+    return 0;
+  }
+
+  pushReason(reasons, "fuente oficial municipal");
+  return 5;
+}
+
 export function buildPlanningLinkCandidate(
   title: string,
   resolvedUrl: URL,
@@ -271,31 +307,46 @@ export function buildPlanningLinkCandidate(
   const pathname = normalizeText(resolvedUrl.pathname);
   const haystack = normalizeText(`${title} ${resolvedUrl.pathname} ${resolvedUrl.search}`);
   const reasons: string[] = [];
-  let score = 0;
+  let relevanceScore = 0;
+  let rankingScore = 0;
 
   if (baseUrl && sameDomain(baseUrl, resolvedUrl)) {
-    score += 3;
+    relevanceScore += 3;
+    rankingScore += 3;
     pushReason(reasons, "mismo dominio");
   }
 
   if (sourceType === "pdf") {
-    score += 4;
+    relevanceScore += 4;
+    rankingScore += 4;
     pushReason(reasons, "pdf");
   }
 
-  for (const keyword of PLANNING_KEYWORDS) {
-    if (haystack.includes(normalizeText(keyword))) {
-      score += 2;
-      pushReason(reasons, keyword);
+  const keywordMatches = countPlanningKeywordMatches(haystack);
+  if (keywordMatches > 0) {
+    relevanceScore += keywordMatches * 2;
+    rankingScore += keywordMatches * 2;
+
+    for (const keyword of PLANNING_KEYWORDS) {
+      if (haystack.includes(normalizeText(keyword))) {
+        pushReason(reasons, keyword);
+      }
     }
   }
 
-  score += scoreOfficialSignals(hostname, pathname, reasons);
-  score -= scorePenaltySignals(hostname, haystack, reasons);
+  const officialScore = scoreOfficialSignals(hostname, pathname, reasons);
+  const baseContextScore = scoreBaseContextSignals(baseUrl, resolvedUrl, reasons);
+  const penaltyScore = scorePenaltySignals(hostname, haystack, reasons);
 
-  if (score <= 0) {
+  relevanceScore += officialScore + baseContextScore;
+  rankingScore += officialScore + baseContextScore;
+  rankingScore -= penaltyScore;
+
+  if (relevanceScore <= 0) {
     return null;
   }
+
+  const score = Math.max(1, rankingScore);
 
   return {
     title,
@@ -316,6 +367,12 @@ export function sortPlanningLinkCandidates(
   return [...candidates].sort((left, right) => {
     if (weight[right.confidence] !== weight[left.confidence]) {
       return weight[right.confidence] - weight[left.confidence];
+    }
+
+    const rightScore = "score" in right && typeof right.score === "number" ? right.score : 0;
+    const leftScore = "score" in left && typeof left.score === "number" ? left.score : 0;
+    if (rightScore !== leftScore) {
+      return rightScore - leftScore;
     }
 
     return left.title.localeCompare(right.title, "es");

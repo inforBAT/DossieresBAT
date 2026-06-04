@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   buildPlanningLinkCandidate,
   extractPlanningLinkCandidatesFromHtml,
+  sortPlanningLinkCandidates,
 } from "./planningUrlCandidates";
 
 const officialBaseUrl = new URL("https://www.bergara.eus/es/urbanismo");
@@ -77,15 +78,13 @@ assert.equal(
   true,
 );
 assert.equal(
-  (geoportalCandidate!.confidence === "high" &&
-    blogCandidate!.confidence !== "high") ||
-    geoportalCandidate!.reason.length > blogCandidate!.reason.length,
-  true,
+  sortPlanningLinkCandidates([blogCandidate!, geoportalCandidate!])[0]?.url,
+  geoportalCandidate!.url,
 );
 
 const commercialCandidate = buildPlanningLinkCandidate(
-  "Solar urbanizable en venta",
-  new URL("https://www.idealista.com/inmueble/12345"),
+  "Planeamiento urbanistico de solar en venta",
+  new URL("https://www.idealista.com/news/planeamiento-solar-urbano"),
   "duckduckgo.com",
 );
 
@@ -95,3 +94,11 @@ assert.equal(
   true,
 );
 assert.equal(commercialCandidate!.confidence, "low");
+
+const unrelatedCandidate = buildPlanningLinkCandidate(
+  "Receta de paella tradicional",
+  new URL("https://cocina.example.com/recetas/paella"),
+  "duckduckgo.com",
+);
+
+assert.equal(unrelatedCandidate, null);
