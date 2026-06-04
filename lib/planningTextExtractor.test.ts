@@ -46,6 +46,20 @@ assert.equal(applied.planning.rules.max_height_eaves_m, 6.5);
 assert.equal(applied.planning.zone, "UAD-5");
 assert.equal(applied.planning.rules_confirmed_by_user, false);
 
+const candidateBase = buildProjectInput({
+  planning: {
+    planning_url: "https://example.com/ficha-urbanistica.pdf",
+  },
+});
+const candidateApplied = applyPlanningExtractionProposal(
+  candidateBase.planning,
+  extraction,
+);
+assert.equal(
+  candidateApplied.planning.planning_url,
+  "https://example.com/ficha-urbanistica.pdf",
+);
+
 const confirmed = buildProjectInput({
   planning: {
     rules_confirmed_by_user: true,

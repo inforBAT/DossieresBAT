@@ -170,8 +170,9 @@ export function PlanningForm({
   function applyExtractionResult(
     sourceLabel: string,
     extraction: PlanningExtractionResult,
+    planningBase: PlanningBlock = planning,
   ) {
-    const applied = applyPlanningExtractionProposal(planning, extraction);
+    const applied = applyPlanningExtractionProposal(planningBase, extraction);
     changePlanning(applied.planning);
     setPlanningGuidance(buildPlanningGuidance(extraction));
 
@@ -208,7 +209,10 @@ export function PlanningForm({
       return;
     }
 
-    if (applied.conflictFields.length > 0 || planning.rules_confirmed_by_user) {
+    if (
+      applied.conflictFields.length > 0 ||
+      planningBase.rules_confirmed_by_user
+    ) {
       setMessage(
         "Se detectaron valores, pero se han mantenido los existentes. Revisa las notas de normativa.",
       );
@@ -383,10 +387,14 @@ export function PlanningForm({
   async function processLinkCandidate(candidate: PlanningLinkCandidate) {
     setProcessingCandidateUrl(candidate.url);
     try {
+      const planningBase: PlanningBlock = {
+        ...planning,
+        planning_url: candidate.url,
+      };
       changePlanning({ planning_url: candidate.url });
       const payload = await requestUrlExtraction(candidate.url);
       setLinkCandidates(payload.linkCandidates ?? []);
-      applyExtractionResult(candidate.title, payload.extraction!);
+      applyExtractionResult(candidate.title, payload.extraction!, planningBase);
     } catch (error) {
       setMessage(
         error instanceof Error
