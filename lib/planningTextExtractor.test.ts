@@ -4,6 +4,7 @@ import {
   applyAcceptedPlanningRulesProposal,
   applyPlanningExtractionProposal,
   extractPlanningRulesFromText,
+  extractPlanningRulesProposalFromText,
 } from "./planningTextExtractor";
 
 const sampleText = `
@@ -131,4 +132,19 @@ assert.ok(
   confirmedApplied.planning.review_notes.includes(
     "No se han sobrescrito valores.",
   ),
+);
+
+const missingDataProposal = extractPlanningRulesProposalFromText(`
+Altura maxima: se define en Fichas Urbanisticas del ambito.
+Usos permitidos: segun ficha urbanistica aplicable.
+`);
+
+assert.equal(missingDataProposal.max_height_m.value, null);
+assert.equal(
+  missingDataProposal.max_height_m.reason,
+  "El documento remite a ficha urbanistica para este parametro.",
+);
+assert.equal(
+  missingDataProposal.uses_allowed.reason,
+  "El documento remite a ficha urbanistica para este parametro.",
 );

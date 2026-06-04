@@ -240,6 +240,7 @@ function normalizeNumericRuleProposal(
     value: typeof candidate.value === "number" ? candidate.value : null,
     confidence: normalizePlanningRuleConfidence(candidate.confidence),
     source_excerpt: stringValue(candidate.source_excerpt),
+    reason: stringValue(candidate.reason),
     status: normalizePlanningRuleProposalStatus(candidate.status),
   };
 }
@@ -258,6 +259,7 @@ function normalizeListRuleProposal(
     values: stringArray(candidate.values),
     confidence: normalizePlanningRuleConfidence(candidate.confidence),
     source_excerpt: stringValue(candidate.source_excerpt),
+    reason: stringValue(candidate.reason),
     status: normalizePlanningRuleProposalStatus(candidate.status),
   };
 }
