@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:planning-discovery": "tsc --module nodenext --moduleResolution nodenext --target es2022 --esModuleInterop --outDir .tmp/planning-tests lib/planningDiscover.test.ts lib/planningUrlCandidates.test.ts && node .tmp/planning-tests/planningDiscover.test.js && node .tmp/planning-tests/planningUrlCandidates.test.js"
   },
   "dependencies": {
     "next": "^15.0.0",

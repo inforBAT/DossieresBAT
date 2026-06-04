@@ -2,7 +2,11 @@ import type {
   PlanningCandidateKind,
   PlanningLinkCandidate,
 } from "./planningUrlCandidates";
-import { extractPlanningLinkCandidatesFromHtml } from "./planningUrlCandidates";
+import {
+  buildPlanningLinkCandidate,
+  extractPlanningLinkCandidatesFromHtml,
+  sortPlanningLinkCandidates,
+} from "./planningUrlCandidates";
 import { fetchTextFromPublicUrl } from "./safeUrlFetch";
 
 interface PlanningDiscoveryInput {
@@ -120,43 +124,6 @@ function unwrapSearchResultUrl(url: URL): URL {
   return url;
 }
 
-function scoreCandidate(title: string, url: URL): { score: number; reasons: string[] } {
-  const haystack = normalizeText(`${title} ${url.pathname} ${url.search}`);
-  let score = 0;
-  const reasons: string[] = [];
-
-  if (url.pathname.toLowerCase().endsWith(".pdf")) {
-    score += 4;
-    reasons.push("pdf");
-  }
-
-  for (const keyword of DISCOVERY_KEYWORDS) {
-    if (haystack.includes(normalizeText(keyword))) {
-      score += 2;
-      reasons.push(keyword);
-    }
-  }
-
-  if (normalizeText(url.hostname).includes("urban")) {
-    score += 1;
-    reasons.push("dominio urbanistico");
-  }
-
-  return { score, reasons };
-}
-
-function confidenceFromScore(score: number): "low" | "medium" | "high" {
-  if (score >= 8) {
-    return "high";
-  }
-
-  if (score >= 4) {
-    return "medium";
-  }
-
-  return "low";
-}
-
 function parseSearchResultAnchors(html: string): PlanningLinkCandidate[] {
   const candidates: PlanningLinkCandidate[] = [];
   const anchorPattern = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -185,19 +152,18 @@ function parseSearchResultAnchors(html: string): PlanningLinkCandidate[] {
     }
 
     const sourceType = detectSourceTypeFromUrl(targetUrl);
-    const { score, reasons } = scoreCandidate(title, targetUrl);
-    if (score <= 0) {
+    const candidate = buildPlanningLinkCandidate(
+      title,
+      targetUrl,
+      SEARCH_RESULT_HOST,
+    );
+    if (!candidate) {
       continue;
     }
 
     candidates.push({
-      title,
-      url: targetUrl.toString(),
+      ...candidate,
       sourceType,
-      confidence: confidenceFromScore(score),
-      reason: reasons.join(", "),
-      source: SEARCH_RESULT_HOST,
-      kind: inferCandidateKind(title, targetUrl, sourceType),
     });
   }
 
@@ -218,14 +184,7 @@ function uniqueCandidates(candidates: PlanningLinkCandidate[]): PlanningLinkCand
 }
 
 function sortCandidates(candidates: PlanningLinkCandidate[]): PlanningLinkCandidate[] {
-  const weight = { low: 0, medium: 1, high: 2 };
-  return [...candidates].sort((left, right) => {
-    if (weight[right.confidence] !== weight[left.confidence]) {
-      return weight[right.confidence] - weight[left.confidence];
-    }
-
-    return left.title.localeCompare(right.title, "es");
-  });
+  return sortPlanningLinkCandidates(candidates);
 }
 
 async function discoverFromPlanningUrl(planningUrl: string): Promise<PlanningLinkCandidate[]> {
