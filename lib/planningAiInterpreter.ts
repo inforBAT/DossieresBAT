@@ -6,11 +6,18 @@ import {
   parseMetricNumber,
 } from "./planningNormalizer";
 import {
+  extractPlanningRulesProposalFromText,
   extractPlanningRulesFromText,
   type PlanningExtractionConfidence,
   type PlanningExtractionResult,
 } from "./planningTextExtractor";
-import type { PlanningRules, PlanningSourceArticle } from "./projectInputSchema";
+import type {
+  PlanningListRuleProposal,
+  PlanningNumericRuleProposal,
+  PlanningRules,
+  PlanningRulesProposal,
+  PlanningSourceArticle,
+} from "./projectInputSchema";
 import type {
   PlanningPdfChunk,
   PlanningPdfIngestion,
@@ -38,6 +45,55 @@ interface PlanningAiPayload {
     excerpt?: string;
   }>;
   rules?: Partial<Record<keyof PlanningRules, string | number | null>>;
+  rules_proposal?: {
+    buildability_m2_m2?: {
+      value?: string | number | null;
+      confidence?: PlanningExtractionConfidence;
+      source_excerpt?: string;
+    };
+    occupancy_percent?: {
+      value?: string | number | null;
+      confidence?: PlanningExtractionConfidence;
+      source_excerpt?: string;
+    };
+    max_height_m?: {
+      value?: string | number | null;
+      confidence?: PlanningExtractionConfidence;
+      source_excerpt?: string;
+    };
+    max_floors?: {
+      value?: string | number | null;
+      confidence?: PlanningExtractionConfidence;
+      source_excerpt?: string;
+    };
+    setbacks?: {
+      front_m?: {
+        value?: string | number | null;
+        confidence?: PlanningExtractionConfidence;
+        source_excerpt?: string;
+      };
+      rear_m?: {
+        value?: string | number | null;
+        confidence?: PlanningExtractionConfidence;
+        source_excerpt?: string;
+      };
+      side_m?: {
+        value?: string | number | null;
+        confidence?: PlanningExtractionConfidence;
+        source_excerpt?: string;
+      };
+    };
+    uses_allowed?: {
+      values?: string[];
+      confidence?: PlanningExtractionConfidence;
+      source_excerpt?: string;
+    };
+    uses_forbidden?: {
+      values?: string[];
+      confidence?: PlanningExtractionConfidence;
+      source_excerpt?: string;
+    };
+  };
 }
 
 interface SelectedAiChunks {
@@ -316,6 +372,108 @@ function normalizeRules(
   };
 }
 
+function normalizeProposalConfidence(
+  confidence: unknown,
+): PlanningExtractionConfidence {
+  return confidence === "high" || confidence === "medium" ? confidence : "low";
+}
+
+function normalizeNumericProposal(
+  proposal: {
+    value?: string | number | null;
+    confidence?: PlanningExtractionConfidence;
+    source_excerpt?: string;
+  } | undefined,
+  fallback: PlanningNumericRuleProposal,
+): PlanningNumericRuleProposal {
+  const parsedValue = parseNullableMetric(proposal?.value);
+
+  return {
+    value: parsedValue,
+    confidence:
+      proposal && parsedValue !== null
+        ? normalizeProposalConfidence(proposal.confidence)
+        : fallback.confidence,
+    source_excerpt: hasText(proposal?.source_excerpt)
+      ? proposal!.source_excerpt!.trim()
+      : fallback.source_excerpt,
+    status: "pending",
+  };
+}
+
+function normalizeListProposal(
+  proposal: {
+    values?: string[];
+    confidence?: PlanningExtractionConfidence;
+    source_excerpt?: string;
+  } | undefined,
+  fallback: PlanningListRuleProposal,
+): PlanningListRuleProposal {
+  const values = uniqueStrings(
+    Array.isArray(proposal?.values)
+      ? proposal!.values.filter((value): value is string => typeof value === "string")
+      : fallback.values,
+  );
+
+  return {
+    values,
+    confidence:
+      values.length > 0 && proposal
+        ? normalizeProposalConfidence(proposal.confidence)
+        : fallback.confidence,
+    source_excerpt: hasText(proposal?.source_excerpt)
+      ? proposal!.source_excerpt!.trim()
+      : fallback.source_excerpt,
+    status: "pending",
+  };
+}
+
+function normalizeRulesProposal(
+  proposal: PlanningAiPayload["rules_proposal"],
+  fallback: PlanningRulesProposal,
+): PlanningRulesProposal {
+  return {
+    buildability_m2_m2: normalizeNumericProposal(
+      proposal?.buildability_m2_m2,
+      fallback.buildability_m2_m2,
+    ),
+    occupancy_percent: normalizeNumericProposal(
+      proposal?.occupancy_percent,
+      fallback.occupancy_percent,
+    ),
+    max_height_m: normalizeNumericProposal(
+      proposal?.max_height_m,
+      fallback.max_height_m,
+    ),
+    max_floors: normalizeNumericProposal(
+      proposal?.max_floors,
+      fallback.max_floors,
+    ),
+    setbacks: {
+      front_m: normalizeNumericProposal(
+        proposal?.setbacks?.front_m,
+        fallback.setbacks.front_m,
+      ),
+      rear_m: normalizeNumericProposal(
+        proposal?.setbacks?.rear_m,
+        fallback.setbacks.rear_m,
+      ),
+      side_m: normalizeNumericProposal(
+        proposal?.setbacks?.side_m,
+        fallback.setbacks.side_m,
+      ),
+    },
+    uses_allowed: normalizeListProposal(
+      proposal?.uses_allowed,
+      fallback.uses_allowed,
+    ),
+    uses_forbidden: normalizeListProposal(
+      proposal?.uses_forbidden,
+      fallback.uses_forbidden,
+    ),
+  };
+}
+
 function buildDefaultWarnings(
   payload: PlanningAiPayload | null,
   context: PlanningAiInterpretationContext,
@@ -419,7 +577,8 @@ function aiSystemPrompt(): string {
     "No inventes datos urbanisticos no presentes en el documento.",
     "Si el documento no contiene datos suficientes, marca document_sufficient=false y explica la carencia en warnings.",
     "Nunca confirmes la normativa del usuario ni afirmes que esta validada.",
-    "Busca unicamente: zona, ordenanza, edificabilidad total/sobre rasante/bajo rasante, ocupacion, numero maximo de plantas, altura de alero, altura de cumbrera, retranqueos a linderos y a calle.",
+    "Genera rules_proposal con propuestas revisables por regla, incluyendo confidence y source_excerpt por cada campo.",
+    "Busca unicamente: zona, ordenanza, edificabilidad total/sobre rasante/bajo rasante, ocupacion, numero maximo de plantas, altura de alero, altura de cumbrera, retranqueos a linderos y a calle, edificabilidad m2/m2, retranqueo frontal/trasero/lateral y usos permitidos/prohibidos.",
     "Incluye source_articles con article, page y excerpt cuando cites una regla.",
   ].join(" ");
 }
@@ -455,6 +614,55 @@ function aiUserPrompt(
           max_height_ridge_m: null,
           setback_boundary_m: null,
           setback_street_m: null,
+        },
+        rules_proposal: {
+          buildability_m2_m2: {
+            value: null,
+            confidence: "low | medium | high",
+            source_excerpt: "",
+          },
+          occupancy_percent: {
+            value: null,
+            confidence: "low | medium | high",
+            source_excerpt: "",
+          },
+          max_height_m: {
+            value: null,
+            confidence: "low | medium | high",
+            source_excerpt: "",
+          },
+          max_floors: {
+            value: null,
+            confidence: "low | medium | high",
+            source_excerpt: "",
+          },
+          setbacks: {
+            front_m: {
+              value: null,
+              confidence: "low | medium | high",
+              source_excerpt: "",
+            },
+            rear_m: {
+              value: null,
+              confidence: "low | medium | high",
+              source_excerpt: "",
+            },
+            side_m: {
+              value: null,
+              confidence: "low | medium | high",
+              source_excerpt: "",
+            },
+          },
+          uses_allowed: {
+            values: [],
+            confidence: "low | medium | high",
+            source_excerpt: "",
+          },
+          uses_forbidden: {
+            values: [],
+            confidence: "low | medium | high",
+            source_excerpt: "",
+          },
         },
         source_articles: [
           {
@@ -640,6 +848,165 @@ async function requestAiInterpretation(
                   "setback_street_m",
                 ],
               },
+              rules_proposal: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  buildability_m2_m2: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      value: {
+                        anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                      },
+                      confidence: {
+                        type: "string",
+                        enum: ["low", "medium", "high"],
+                      },
+                      source_excerpt: { type: "string" },
+                    },
+                    required: ["value", "confidence", "source_excerpt"],
+                  },
+                  occupancy_percent: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      value: {
+                        anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                      },
+                      confidence: {
+                        type: "string",
+                        enum: ["low", "medium", "high"],
+                      },
+                      source_excerpt: { type: "string" },
+                    },
+                    required: ["value", "confidence", "source_excerpt"],
+                  },
+                  max_height_m: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      value: {
+                        anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                      },
+                      confidence: {
+                        type: "string",
+                        enum: ["low", "medium", "high"],
+                      },
+                      source_excerpt: { type: "string" },
+                    },
+                    required: ["value", "confidence", "source_excerpt"],
+                  },
+                  max_floors: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      value: {
+                        anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                      },
+                      confidence: {
+                        type: "string",
+                        enum: ["low", "medium", "high"],
+                      },
+                      source_excerpt: { type: "string" },
+                    },
+                    required: ["value", "confidence", "source_excerpt"],
+                  },
+                  setbacks: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      front_m: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                          value: {
+                            anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                          },
+                          confidence: {
+                            type: "string",
+                            enum: ["low", "medium", "high"],
+                          },
+                          source_excerpt: { type: "string" },
+                        },
+                        required: ["value", "confidence", "source_excerpt"],
+                      },
+                      rear_m: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                          value: {
+                            anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                          },
+                          confidence: {
+                            type: "string",
+                            enum: ["low", "medium", "high"],
+                          },
+                          source_excerpt: { type: "string" },
+                        },
+                        required: ["value", "confidence", "source_excerpt"],
+                      },
+                      side_m: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                          value: {
+                            anyOf: [{ type: "number" }, { type: "string" }, { type: "null" }],
+                          },
+                          confidence: {
+                            type: "string",
+                            enum: ["low", "medium", "high"],
+                          },
+                          source_excerpt: { type: "string" },
+                        },
+                        required: ["value", "confidence", "source_excerpt"],
+                      },
+                    },
+                    required: ["front_m", "rear_m", "side_m"],
+                  },
+                  uses_allowed: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      values: {
+                        type: "array",
+                        items: { type: "string" },
+                      },
+                      confidence: {
+                        type: "string",
+                        enum: ["low", "medium", "high"],
+                      },
+                      source_excerpt: { type: "string" },
+                    },
+                    required: ["values", "confidence", "source_excerpt"],
+                  },
+                  uses_forbidden: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      values: {
+                        type: "array",
+                        items: { type: "string" },
+                      },
+                      confidence: {
+                        type: "string",
+                        enum: ["low", "medium", "high"],
+                      },
+                      source_excerpt: { type: "string" },
+                    },
+                    required: ["values", "confidence", "source_excerpt"],
+                  },
+                },
+                required: [
+                  "buildability_m2_m2",
+                  "occupancy_percent",
+                  "max_height_m",
+                  "max_floors",
+                  "setbacks",
+                  "uses_allowed",
+                  "uses_forbidden",
+                ],
+              },
             },
             required: [
               "document_sufficient",
@@ -650,6 +1017,7 @@ async function requestAiInterpretation(
               "review_notes",
               "source_articles",
               "rules",
+              "rules_proposal",
             ],
           },
         },
@@ -702,6 +1070,9 @@ export async function interpretPlanningPdfWithAi(
 ): Promise<PlanningExtractionResult> {
   const selectedChunks = selectChunksForAi(ingestion);
   const sharedWarnings = selectedChunks.truncated ? [AI_TRUNCATION_WARNING] : [];
+  const heuristicRulesProposal = extractPlanningRulesProposalFromText(
+    ingestion.raw_text,
+  );
 
   try {
     const aiPayload = await requestAiInterpretation(
@@ -717,11 +1088,23 @@ export async function interpretPlanningPdfWithAi(
     }
 
     const rules = normalizeRules(aiPayload.rules);
+    const rulesProposal = normalizeRulesProposal(
+      aiPayload.rules_proposal,
+      heuristicRulesProposal,
+    );
     const hasUsefulData = Object.values(rules).some((value) =>
       typeof value === "number"
         ? Number.isFinite(value)
         : hasText(typeof value === "string" ? value : ""),
-    );
+    ) || Object.values(rulesProposal.setbacks).some(
+      (proposal) => typeof proposal.value === "number",
+    ) ||
+      typeof rulesProposal.buildability_m2_m2.value === "number" ||
+      typeof rulesProposal.occupancy_percent.value === "number" ||
+      typeof rulesProposal.max_height_m.value === "number" ||
+      typeof rulesProposal.max_floors.value === "number" ||
+      rulesProposal.uses_allowed.values.length > 0 ||
+      rulesProposal.uses_forbidden.values.length > 0;
     const warnings = buildDefaultWarnings(
       {
         ...aiPayload,
@@ -739,6 +1122,7 @@ export async function interpretPlanningPdfWithAi(
       zone: parseStringValue(aiPayload.zone),
       ordinance: parseStringValue(aiPayload.ordinance),
       rules,
+      rulesProposal,
       rawMatches: [],
       warnings,
       sourceArticles: buildAiSourceArticles(

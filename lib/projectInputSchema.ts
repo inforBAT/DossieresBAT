@@ -24,6 +24,18 @@ export const REQUIREMENT_SEVERITIES = [
   "optional",
 ] as const;
 
+export const PLANNING_RULE_CONFIDENCES = [
+  "low",
+  "medium",
+  "high",
+] as const;
+
+export const PLANNING_RULE_PROPOSAL_STATUSES = [
+  "pending",
+  "accepted",
+  "rejected",
+] as const;
+
 export const GRAPHIC_TYPES = [
   "parcel_base",
   "parcel_setbacks",
@@ -69,6 +81,10 @@ export const OVERFLOW_POLICIES = [
 export type AssetCategory = (typeof ASSET_CATEGORIES)[number];
 export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
 export type RequirementSeverity = (typeof REQUIREMENT_SEVERITIES)[number];
+export type PlanningRuleConfidence =
+  (typeof PLANNING_RULE_CONFIDENCES)[number];
+export type PlanningRuleProposalStatus =
+  (typeof PLANNING_RULE_PROPOSAL_STATUSES)[number];
 export type GraphicType = (typeof GRAPHIC_TYPES)[number];
 export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
 export type GraphicStatus = (typeof GRAPHIC_STATUSES)[number];
@@ -196,6 +212,34 @@ export interface PlanningRules {
   pool_boundary_m_display?: string;
 }
 
+export interface PlanningNumericRuleProposal {
+  value: number | null;
+  confidence: PlanningRuleConfidence;
+  source_excerpt: string;
+  status: PlanningRuleProposalStatus;
+}
+
+export interface PlanningListRuleProposal {
+  values: string[];
+  confidence: PlanningRuleConfidence;
+  source_excerpt: string;
+  status: PlanningRuleProposalStatus;
+}
+
+export interface PlanningRulesProposal {
+  max_height_m: PlanningNumericRuleProposal;
+  max_floors: PlanningNumericRuleProposal;
+  buildability_m2_m2: PlanningNumericRuleProposal;
+  occupancy_percent: PlanningNumericRuleProposal;
+  setbacks: {
+    front_m: PlanningNumericRuleProposal;
+    rear_m: PlanningNumericRuleProposal;
+    side_m: PlanningNumericRuleProposal;
+  };
+  uses_allowed: PlanningListRuleProposal;
+  uses_forbidden: PlanningListRuleProposal;
+}
+
 export interface PlanningSourceArticle {
   source_label: string;
   article: string;
@@ -213,6 +257,7 @@ export interface PlanningBlock {
   ordinance: string;
   rules_confirmed_by_user: boolean;
   rules: PlanningRules;
+  rules_proposal: PlanningRulesProposal;
   source_articles: PlanningSourceArticle[];
   review_notes: string;
 }
@@ -504,6 +549,64 @@ export const EMPTY_PROJECT_INPUT_V2: ProjectInputV2 = {
       setback_boundary_m_display: "",
       setback_street_m: null,
       setback_street_m_display: "",
+    },
+    rules_proposal: {
+      max_height_m: {
+        value: null,
+        confidence: "low",
+        source_excerpt: "",
+        status: "pending",
+      },
+      max_floors: {
+        value: null,
+        confidence: "low",
+        source_excerpt: "",
+        status: "pending",
+      },
+      buildability_m2_m2: {
+        value: null,
+        confidence: "low",
+        source_excerpt: "",
+        status: "pending",
+      },
+      occupancy_percent: {
+        value: null,
+        confidence: "low",
+        source_excerpt: "",
+        status: "pending",
+      },
+      setbacks: {
+        front_m: {
+          value: null,
+          confidence: "low",
+          source_excerpt: "",
+          status: "pending",
+        },
+        rear_m: {
+          value: null,
+          confidence: "low",
+          source_excerpt: "",
+          status: "pending",
+        },
+        side_m: {
+          value: null,
+          confidence: "low",
+          source_excerpt: "",
+          status: "pending",
+        },
+      },
+      uses_allowed: {
+        values: [],
+        confidence: "low",
+        source_excerpt: "",
+        status: "pending",
+      },
+      uses_forbidden: {
+        values: [],
+        confidence: "low",
+        source_excerpt: "",
+        status: "pending",
+      },
     },
     source_articles: [],
     review_notes: "",

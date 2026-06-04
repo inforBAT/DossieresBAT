@@ -6,14 +6,18 @@ import {
 } from "./planningTextExtractor";
 
 const sampleText = `
-Edificabilidad total: 295,29 m²
-Edificabilidad sobre rasante: 196,86 m²
-Edificabilidad bajo rasante: 98,43 m²
+Edificabilidad total: 295,29 m2
+Edificabilidad: 0,35 m2/m2
+Edificabilidad sobre rasante: 196,86 m2
+Edificabilidad bajo rasante: 98,43 m2
 Retranqueo a linderos: 4 m
 Retranqueo a calle: 5 m
+Retranqueo posterior: 6 m
 Altura al alero: 6,5 m
 Altura a cumbrera: 9 m
-Zona urbanística: UAD-5
+Ocupacion maxima: 30 %
+Usos permitidos: residencial, dotacional
+Zona urbanistica: UAD-5
 Ordenanza: Residencial extensiva
 `;
 
@@ -31,6 +35,15 @@ assert.equal(extraction.rules.max_height_eaves_m, 6.5);
 assert.equal(extraction.rules.max_height_ridge_m, 9);
 assert.equal(extraction.zone, "UAD-5");
 assert.equal(extraction.ordinance, "Residencial extensiva");
+assert.equal(extraction.rulesProposal.buildability_m2_m2.value, 0.35);
+assert.equal(extraction.rulesProposal.occupancy_percent.value, 30);
+assert.equal(extraction.rulesProposal.setbacks.front_m.value, 5);
+assert.equal(extraction.rulesProposal.setbacks.rear_m.value, 6);
+assert.equal(extraction.rulesProposal.setbacks.side_m.value, 4);
+assert.deepEqual(extraction.rulesProposal.uses_allowed.values, [
+  "residencial",
+  "dotacional",
+]);
 
 const base = buildProjectInput({
   planning: {
@@ -40,11 +53,13 @@ const base = buildProjectInput({
 
 const applied = applyPlanningExtractionProposal(base.planning, extraction);
 
-assert.equal(applied.planning.rules.buildability_total_m2, 295.29);
-assert.equal(applied.planning.rules.setback_boundary_m, 4);
-assert.equal(applied.planning.rules.max_height_eaves_m, 6.5);
+assert.equal(applied.planning.rules.buildability_total_m2, null);
+assert.equal(applied.planning.rules.setback_boundary_m, null);
+assert.equal(applied.planning.rules.max_height_eaves_m, null);
 assert.equal(applied.planning.zone, "UAD-5");
 assert.equal(applied.planning.rules_confirmed_by_user, false);
+assert.equal(applied.planning.rules_proposal.occupancy_percent.value, 30);
+assert.equal(applied.appliedFields.includes("planning.rules_proposal"), true);
 
 const candidateBase = buildProjectInput({
   planning: {

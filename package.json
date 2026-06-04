@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test:planning-discovery": "tsc --module nodenext --moduleResolution nodenext --target es2022 --esModuleInterop --outDir .tmp/planning-tests lib/planningDiscover.test.ts lib/planningUrlCandidates.test.ts && node .tmp/planning-tests/planningDiscover.test.js && node .tmp/planning-tests/planningUrlCandidates.test.js"
+    "test:planning-discovery": "tsc --module nodenext --moduleResolution nodenext --target es2022 --esModuleInterop --outDir .tmp/planning-tests lib/planningDiscover.test.ts lib/planningUrlCandidates.test.ts && node .tmp/planning-tests/planningDiscover.test.js && node .tmp/planning-tests/planningUrlCandidates.test.js",
+    "test:planning-rules": "tsc --module nodenext --moduleResolution nodenext --target es2022 --esModuleInterop --outDir .tmp/planning-tests lib/planningTextExtractor.test.ts lib/planningRulesProposal.test.ts && node .tmp/planning-tests/planningTextExtractor.test.js && node .tmp/planning-tests/planningRulesProposal.test.js"
   },
   "dependencies": {
     "next": "^15.0.0",
