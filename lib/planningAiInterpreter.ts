@@ -14,7 +14,6 @@ import type {
   PlanningListRuleProposal,
   PlanningNumericRuleProposal,
   PlanningRuleConfidence,
-  PlanningRuleProposalStatus,
   PlanningRules,
   PlanningRulesProposal,
   PlanningSourceArticle,
@@ -65,14 +64,12 @@ interface PlanningAiNumericRuleProposal {
   value?: number | null;
   confidence?: PlanningRuleConfidence;
   source_excerpt?: string;
-  status?: PlanningRuleProposalStatus;
 }
 
 interface PlanningAiListRuleProposal {
   values?: string[];
   confidence?: PlanningRuleConfidence;
   source_excerpt?: string;
-  status?: PlanningRuleProposalStatus;
 }
 
 interface SelectedAiChunks {
@@ -309,17 +306,6 @@ function normalizeProposalConfidence(
     : "low";
 }
 
-function normalizeProposalStatus(
-  status: unknown,
-): PlanningRuleProposalStatus {
-  return status === "edited" ||
-    status === "accepted" ||
-    status === "rejected" ||
-    status === "proposed"
-    ? status
-    : "proposed";
-}
-
 function emptyNumericRuleProposal(): PlanningNumericRuleProposal {
   return {
     value: null,
@@ -345,7 +331,7 @@ function normalizeNumericRuleProposal(
     value: typeof proposal?.value === "number" ? proposal.value : null,
     confidence: normalizeProposalConfidence(proposal?.confidence),
     source_excerpt: parseStringValue(proposal?.source_excerpt),
-    status: normalizeProposalStatus(proposal?.status),
+    status: "proposed",
   };
 }
 
@@ -358,7 +344,7 @@ function normalizeListRuleProposal(
       : [],
     confidence: normalizeProposalConfidence(proposal?.confidence),
     source_excerpt: parseStringValue(proposal?.source_excerpt),
-    status: normalizeProposalStatus(proposal?.status),
+    status: "proposed",
   };
 }
 
@@ -580,57 +566,48 @@ function aiUserPrompt(
             value: null,
             confidence: "low",
             source_excerpt: "",
-            status: "proposed",
           },
           max_floors: {
             value: null,
             confidence: "low",
             source_excerpt: "",
-            status: "proposed",
           },
           buildability_m2_m2: {
             value: null,
             confidence: "low",
             source_excerpt: "",
-            status: "proposed",
           },
           occupancy_percent: {
             value: null,
             confidence: "low",
             source_excerpt: "",
-            status: "proposed",
           },
           setbacks: {
             front_m: {
               value: null,
               confidence: "low",
               source_excerpt: "",
-              status: "proposed",
             },
             rear_m: {
               value: null,
               confidence: "low",
               source_excerpt: "",
-              status: "proposed",
             },
             side_m: {
               value: null,
               confidence: "low",
               source_excerpt: "",
-              status: "proposed",
             },
           },
           uses_allowed: {
             values: [],
             confidence: "low",
             source_excerpt: "",
-            status: "proposed",
           },
           uses_forbidden: {
             values: [],
             confidence: "low",
             source_excerpt: "",
-            status: "proposed",
           },
         },
         source_articles: [
@@ -787,12 +764,8 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
-                      status: {
-                        type: "string",
-                        enum: ["proposed", "edited", "accepted", "rejected"],
-                      },
                     },
-                    required: ["value", "confidence", "source_excerpt", "status"],
+                    required: ["value", "confidence", "source_excerpt"],
                   },
                   max_floors: {
                     type: "object",
@@ -804,12 +777,8 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
-                      status: {
-                        type: "string",
-                        enum: ["proposed", "edited", "accepted", "rejected"],
-                      },
                     },
-                    required: ["value", "confidence", "source_excerpt", "status"],
+                    required: ["value", "confidence", "source_excerpt"],
                   },
                   buildability_m2_m2: {
                     type: "object",
@@ -821,12 +790,8 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
-                      status: {
-                        type: "string",
-                        enum: ["proposed", "edited", "accepted", "rejected"],
-                      },
                     },
-                    required: ["value", "confidence", "source_excerpt", "status"],
+                    required: ["value", "confidence", "source_excerpt"],
                   },
                   occupancy_percent: {
                     type: "object",
@@ -838,12 +803,8 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
-                      status: {
-                        type: "string",
-                        enum: ["proposed", "edited", "accepted", "rejected"],
-                      },
                     },
-                    required: ["value", "confidence", "source_excerpt", "status"],
+                    required: ["value", "confidence", "source_excerpt"],
                   },
                   setbacks: {
                     type: "object",
@@ -859,12 +820,8 @@ async function requestAiInterpretation(
                             enum: ["low", "medium", "high"],
                           },
                           source_excerpt: { type: "string" },
-                          status: {
-                            type: "string",
-                            enum: ["proposed", "edited", "accepted", "rejected"],
-                          },
                         },
-                        required: ["value", "confidence", "source_excerpt", "status"],
+                        required: ["value", "confidence", "source_excerpt"],
                       },
                       rear_m: {
                         type: "object",
@@ -876,12 +833,8 @@ async function requestAiInterpretation(
                             enum: ["low", "medium", "high"],
                           },
                           source_excerpt: { type: "string" },
-                          status: {
-                            type: "string",
-                            enum: ["proposed", "edited", "accepted", "rejected"],
-                          },
                         },
-                        required: ["value", "confidence", "source_excerpt", "status"],
+                        required: ["value", "confidence", "source_excerpt"],
                       },
                       side_m: {
                         type: "object",
@@ -893,12 +846,8 @@ async function requestAiInterpretation(
                             enum: ["low", "medium", "high"],
                           },
                           source_excerpt: { type: "string" },
-                          status: {
-                            type: "string",
-                            enum: ["proposed", "edited", "accepted", "rejected"],
-                          },
                         },
-                        required: ["value", "confidence", "source_excerpt", "status"],
+                        required: ["value", "confidence", "source_excerpt"],
                       },
                     },
                     required: ["front_m", "rear_m", "side_m"],
@@ -913,12 +862,8 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
-                      status: {
-                        type: "string",
-                        enum: ["proposed", "edited", "accepted", "rejected"],
-                      },
                     },
-                    required: ["values", "confidence", "source_excerpt", "status"],
+                    required: ["values", "confidence", "source_excerpt"],
                   },
                   uses_forbidden: {
                     type: "object",
@@ -930,12 +875,8 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
-                      status: {
-                        type: "string",
-                        enum: ["proposed", "edited", "accepted", "rejected"],
-                      },
                     },
-                    required: ["values", "confidence", "source_excerpt", "status"],
+                    required: ["values", "confidence", "source_excerpt"],
                   },
                 },
                 required: [
