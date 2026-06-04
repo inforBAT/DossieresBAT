@@ -1,6 +1,12 @@
 import type { PlanningExtractionConfidence } from "./planningTextExtractor";
 
 export type PlanningCandidateSourceType = "pdf" | "html";
+export type PlanningCandidateKind =
+  | "planning_pdf"
+  | "zoning_map"
+  | "urban_sheet"
+  | "municipal_page"
+  | "unknown";
 
 export interface PlanningLinkCandidate {
   title: string;
@@ -8,6 +14,8 @@ export interface PlanningLinkCandidate {
   sourceType: PlanningCandidateSourceType;
   confidence: PlanningExtractionConfidence;
   reason: string;
+  source: string;
+  kind: PlanningCandidateKind;
 }
 
 function normalizeText(value: string): string {
@@ -41,6 +49,31 @@ function confidenceFromScore(score: number): PlanningExtractionConfidence {
     return "medium";
   }
   return "low";
+}
+
+function inferCandidateKind(haystack: string, sourceType: PlanningCandidateSourceType): PlanningCandidateKind {
+  if (haystack.includes("ficha urban")) {
+    return "urban_sheet";
+  }
+
+  if (haystack.includes("zonificacion") || haystack.includes("zoning") || haystack.includes("plano")) {
+    return "zoning_map";
+  }
+
+  if (sourceType === "pdf") {
+    return "planning_pdf";
+  }
+
+  if (
+    haystack.includes("pgou") ||
+    haystack.includes("plan general") ||
+    haystack.includes("normas subsidiarias") ||
+    haystack.includes("planeamiento")
+  ) {
+    return "municipal_page";
+  }
+
+  return "unknown";
 }
 
 const KEYWORDS = [
@@ -116,6 +149,8 @@ export function extractPlanningLinkCandidatesFromHtml(
       sourceType: resolvedUrl.pathname.toLowerCase().endsWith(".pdf") ? "pdf" : "html",
       confidence: confidenceFromScore(score),
       reason: reasons.join(", "),
+      source: baseUrl.hostname,
+      kind: inferCandidateKind(haystack, resolvedUrl.pathname.toLowerCase().endsWith(".pdf") ? "pdf" : "html"),
     });
   }
 
