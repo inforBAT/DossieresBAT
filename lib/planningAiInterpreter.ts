@@ -782,7 +782,7 @@ async function requestAiInterpretation(
                       source_excerpt: { type: "string" },
                       reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   max_floors: {
                     type: "object",
@@ -796,7 +796,7 @@ async function requestAiInterpretation(
                       source_excerpt: { type: "string" },
                       reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   buildability_m2_m2: {
                     type: "object",
@@ -810,7 +810,7 @@ async function requestAiInterpretation(
                       source_excerpt: { type: "string" },
                       reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   occupancy_percent: {
                     type: "object",
@@ -824,7 +824,7 @@ async function requestAiInterpretation(
                       source_excerpt: { type: "string" },
                       reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   setbacks: {
                     type: "object",
@@ -842,7 +842,7 @@ async function requestAiInterpretation(
                           source_excerpt: { type: "string" },
                           reason: { type: "string" },
                         },
-                        required: ["value", "confidence", "source_excerpt"],
+                        required: ["value", "confidence", "source_excerpt", "reason"],
                       },
                       rear_m: {
                         type: "object",
@@ -856,7 +856,7 @@ async function requestAiInterpretation(
                           source_excerpt: { type: "string" },
                           reason: { type: "string" },
                         },
-                        required: ["value", "confidence", "source_excerpt"],
+                        required: ["value", "confidence", "source_excerpt", "reason"],
                       },
                       side_m: {
                         type: "object",
@@ -870,7 +870,7 @@ async function requestAiInterpretation(
                           source_excerpt: { type: "string" },
                           reason: { type: "string" },
                         },
-                        required: ["value", "confidence", "source_excerpt"],
+                        required: ["value", "confidence", "source_excerpt", "reason"],
                       },
                     },
                     required: ["front_m", "rear_m", "side_m"],
@@ -887,7 +887,7 @@ async function requestAiInterpretation(
                       source_excerpt: { type: "string" },
                       reason: { type: "string" },
                     },
-                    required: ["values", "confidence", "source_excerpt"],
+                    required: ["values", "confidence", "source_excerpt", "reason"],
                   },
                   uses_forbidden: {
                     type: "object",
@@ -901,7 +901,7 @@ async function requestAiInterpretation(
                       source_excerpt: { type: "string" },
                       reason: { type: "string" },
                     },
-                    required: ["values", "confidence", "source_excerpt"],
+                    required: ["values", "confidence", "source_excerpt", "reason"],
                   },
                 },
                 required: [
