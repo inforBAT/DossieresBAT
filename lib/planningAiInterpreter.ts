@@ -64,12 +64,14 @@ interface PlanningAiNumericRuleProposal {
   value?: number | null;
   confidence?: PlanningRuleConfidence;
   source_excerpt?: string;
+  reason?: string;
 }
 
 interface PlanningAiListRuleProposal {
   values?: string[];
   confidence?: PlanningRuleConfidence;
   source_excerpt?: string;
+  reason?: string;
 }
 
 interface SelectedAiChunks {
@@ -311,6 +313,7 @@ function emptyNumericRuleProposal(): PlanningNumericRuleProposal {
     value: null,
     confidence: "low",
     source_excerpt: "",
+    reason: "",
     status: "proposed",
   };
 }
@@ -320,6 +323,7 @@ function emptyListRuleProposal(): PlanningListRuleProposal {
     values: [],
     confidence: "low",
     source_excerpt: "",
+    reason: "",
     status: "proposed",
   };
 }
@@ -331,6 +335,7 @@ function normalizeNumericRuleProposal(
     value: typeof proposal?.value === "number" ? proposal.value : null,
     confidence: normalizeProposalConfidence(proposal?.confidence),
     source_excerpt: parseStringValue(proposal?.source_excerpt),
+    reason: parseStringValue(proposal?.reason),
     status: "proposed",
   };
 }
@@ -344,6 +349,7 @@ function normalizeListRuleProposal(
       : [],
     confidence: normalizeProposalConfidence(proposal?.confidence),
     source_excerpt: parseStringValue(proposal?.source_excerpt),
+    reason: parseStringValue(proposal?.reason),
     status: "proposed",
   };
 }
@@ -525,6 +531,7 @@ function aiSystemPrompt(): string {
     "Nunca confirmes la normativa del usuario ni afirmes que esta validada.",
     "Busca unicamente: zona, ordenanza, edificabilidad total/sobre rasante/bajo rasante, ocupacion, numero maximo de plantas, altura de alero, altura de cumbrera, retranqueos a linderos y a calle.",
     "Devuelve tambien rules_proposal estructurado para revision humana.",
+    "Si no puedes determinar un parametro, deja value=null o values=[] y usa reason para explicar si faltan fichas urbanisticas o documentos complementarios.",
     "Incluye source_articles con article, page y excerpt cuando cites una regla.",
   ].join(" ");
 }
@@ -566,48 +573,57 @@ function aiUserPrompt(
             value: null,
             confidence: "low",
             source_excerpt: "",
+            reason: "",
           },
           max_floors: {
             value: null,
             confidence: "low",
             source_excerpt: "",
+            reason: "",
           },
           buildability_m2_m2: {
             value: null,
             confidence: "low",
             source_excerpt: "",
+            reason: "",
           },
           occupancy_percent: {
             value: null,
             confidence: "low",
             source_excerpt: "",
+            reason: "",
           },
           setbacks: {
             front_m: {
               value: null,
               confidence: "low",
               source_excerpt: "",
+              reason: "",
             },
             rear_m: {
               value: null,
               confidence: "low",
               source_excerpt: "",
+              reason: "",
             },
             side_m: {
               value: null,
               confidence: "low",
               source_excerpt: "",
+              reason: "",
             },
           },
           uses_allowed: {
             values: [],
             confidence: "low",
             source_excerpt: "",
+            reason: "",
           },
           uses_forbidden: {
             values: [],
             confidence: "low",
             source_excerpt: "",
+            reason: "",
           },
         },
         source_articles: [
@@ -764,8 +780,9 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
+                      reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   max_floors: {
                     type: "object",
@@ -777,8 +794,9 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
+                      reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   buildability_m2_m2: {
                     type: "object",
@@ -790,8 +808,9 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
+                      reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   occupancy_percent: {
                     type: "object",
@@ -803,8 +822,9 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
+                      reason: { type: "string" },
                     },
-                    required: ["value", "confidence", "source_excerpt"],
+                    required: ["value", "confidence", "source_excerpt", "reason"],
                   },
                   setbacks: {
                     type: "object",
@@ -820,8 +840,9 @@ async function requestAiInterpretation(
                             enum: ["low", "medium", "high"],
                           },
                           source_excerpt: { type: "string" },
+                          reason: { type: "string" },
                         },
-                        required: ["value", "confidence", "source_excerpt"],
+                        required: ["value", "confidence", "source_excerpt", "reason"],
                       },
                       rear_m: {
                         type: "object",
@@ -833,8 +854,9 @@ async function requestAiInterpretation(
                             enum: ["low", "medium", "high"],
                           },
                           source_excerpt: { type: "string" },
+                          reason: { type: "string" },
                         },
-                        required: ["value", "confidence", "source_excerpt"],
+                        required: ["value", "confidence", "source_excerpt", "reason"],
                       },
                       side_m: {
                         type: "object",
@@ -846,8 +868,9 @@ async function requestAiInterpretation(
                             enum: ["low", "medium", "high"],
                           },
                           source_excerpt: { type: "string" },
+                          reason: { type: "string" },
                         },
-                        required: ["value", "confidence", "source_excerpt"],
+                        required: ["value", "confidence", "source_excerpt", "reason"],
                       },
                     },
                     required: ["front_m", "rear_m", "side_m"],
@@ -862,8 +885,9 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
+                      reason: { type: "string" },
                     },
-                    required: ["values", "confidence", "source_excerpt"],
+                    required: ["values", "confidence", "source_excerpt", "reason"],
                   },
                   uses_forbidden: {
                     type: "object",
@@ -875,8 +899,9 @@ async function requestAiInterpretation(
                         enum: ["low", "medium", "high"],
                       },
                       source_excerpt: { type: "string" },
+                      reason: { type: "string" },
                     },
-                    required: ["values", "confidence", "source_excerpt"],
+                    required: ["values", "confidence", "source_excerpt", "reason"],
                   },
                 },
                 required: [

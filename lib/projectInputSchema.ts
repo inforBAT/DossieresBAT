@@ -217,6 +217,7 @@ export interface PlanningNumericRuleProposal {
   value: number | null;
   confidence: PlanningRuleConfidence;
   source_excerpt: string;
+  reason?: string;
   status: PlanningRuleProposalStatus;
 }
 
@@ -224,6 +225,7 @@ export interface PlanningListRuleProposal {
   values: string[];
   confidence: PlanningRuleConfidence;
   source_excerpt: string;
+  reason?: string;
   status: PlanningRuleProposalStatus;
 }
 
@@ -556,24 +558,28 @@ export const EMPTY_PROJECT_INPUT_V2: ProjectInputV2 = {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        reason: "",
         status: "proposed",
       },
       max_floors: {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        reason: "",
         status: "proposed",
       },
       buildability_m2_m2: {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        reason: "",
         status: "proposed",
       },
       occupancy_percent: {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        reason: "",
         status: "proposed",
       },
       setbacks: {
@@ -581,18 +587,21 @@ export const EMPTY_PROJECT_INPUT_V2: ProjectInputV2 = {
           value: null,
           confidence: "low",
           source_excerpt: "",
+          reason: "",
           status: "proposed",
         },
         rear_m: {
           value: null,
           confidence: "low",
           source_excerpt: "",
+          reason: "",
           status: "proposed",
         },
         side_m: {
           value: null,
           confidence: "low",
           source_excerpt: "",
+          reason: "",
           status: "proposed",
         },
       },
@@ -600,12 +609,14 @@ export const EMPTY_PROJECT_INPUT_V2: ProjectInputV2 = {
         values: [],
         confidence: "low",
         source_excerpt: "",
+        reason: "",
         status: "proposed",
       },
       uses_forbidden: {
         values: [],
         confidence: "low",
         source_excerpt: "",
+        reason: "",
         status: "proposed",
       },
     },
