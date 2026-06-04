@@ -8,10 +8,14 @@ import {
   needsComplementaryPlanningDocuments,
   type PlanningExtractionResult,
 } from "@/lib/planningTextExtractor";
+import type { PlanningDiscoveryCandidate } from "@/lib/planningDiscovery";
 import type { PlanningLinkCandidate } from "@/lib/planningUrlCandidates";
 import type {
   AssetsBlock,
   PlanningBlock,
+  PlanningListRuleProposal,
+  PlanningNumericRuleProposal,
+  PlanningRulesProposal,
   PlanningRules,
   SiteBlock,
   UploadedAsset,
@@ -40,10 +44,14 @@ interface ExtractFromPdfResponse {
   };
 }
 
+interface DiscoverPlanningResponse {
+  candidates: PlanningDiscoveryCandidate[];
+  warnings: string[];
+}
+
 interface PlanningGuidanceState {
   title: string;
   description: string;
-  showSearchAction: boolean;
 }
 
 function normalizeHtmlError(html: string): string {
@@ -55,10 +63,10 @@ function normalizeHtmlError(html: string): string {
     .trim();
 
   if (!text) {
-    return "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.";
+    return "El endpoint de extraccion PDF devolvio una respuesta no JSON. Revisa la consola del servidor.";
   }
 
-  return `El endpoint de extracción PDF devolvió una respuesta no JSON. ${text.slice(0, 180)}`;
+  return `El endpoint de extraccion PDF devolvio una respuesta no JSON. ${text.slice(0, 180)}`;
 }
 
 async function readPdfExtractionResponse(
@@ -77,14 +85,13 @@ async function readPdfExtractionResponse(
       message: body.trim().startsWith("<")
         ? normalizeHtmlError(body)
         : body.trim() ||
-          "El endpoint de extracción PDF devolvió una respuesta no JSON. Revisa la consola del servidor.",
+          "El endpoint de extraccion PDF devolvio una respuesta no JSON. Revisa la consola del servidor.",
     },
   };
 }
 
 function buildPlanningGuidance(
   extraction: PlanningExtractionResult,
-  hasPlanningUrl: boolean,
 ): PlanningGuidanceState | null {
   if (!needsComplementaryPlanningDocuments(extraction)) {
     return null;
@@ -95,7 +102,6 @@ function buildPlanningGuidance(
       "El PDF se ha leido con IA, pero parece ser una ordenanza general. Falta la ficha urbanistica o el ambito aplicable a la parcela.",
     description:
       "Siguiente paso recomendado: usa direccion, municipio y referencia catastral para buscar documentos complementarios, o sube manualmente la ficha urbanistica, PGOU o plano de zonificacion.",
-    showSearchAction: hasPlanningUrl,
   };
 }
 
@@ -109,8 +115,12 @@ export function PlanningForm({
   const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
   const [extractingPdf, setExtractingPdf] = useState(false);
   const [extractingUrl, setExtractingUrl] = useState(false);
+  const [discoveringDocuments, setDiscoveringDocuments] = useState(false);
   const [processingCandidateUrl, setProcessingCandidateUrl] = useState("");
   const [linkCandidates, setLinkCandidates] = useState<PlanningLinkCandidate[]>([]);
+  const [discoveryCandidates, setDiscoveryCandidates] = useState<
+    PlanningDiscoveryCandidate[]
+  >([]);
   const [planningGuidance, setPlanningGuidance] =
     useState<PlanningGuidanceState | null>(null);
 
@@ -169,9 +179,7 @@ export function PlanningForm({
   ) {
     const applied = applyPlanningExtractionProposal(planning, extraction);
     changePlanning(applied.planning);
-    setPlanningGuidance(
-      buildPlanningGuidance(extraction, Boolean(planning.planning_url.trim())),
-    );
+    setPlanningGuidance(buildPlanningGuidance(extraction));
 
     const hasClearSources = hasClearPlanningSourceArticles(extraction);
     const needsComplementaryDocs =
@@ -214,6 +222,133 @@ export function PlanningForm({
     }
 
     setMessage("Se analizo la normativa, pero no habia campos nuevos que aplicar.");
+  }
+
+  function changeRulesProposal(patch: Partial<PlanningRulesProposal>) {
+    onChange({
+      planning: {
+        ...planning,
+        rules_proposal: {
+          ...planning.rules_proposal,
+          ...patch,
+          setbacks: {
+            ...planning.rules_proposal.setbacks,
+            ...patch.setbacks,
+          },
+        },
+      },
+    });
+  }
+
+  function changeNumericProposal(
+    key: Exclude<
+      keyof PlanningRulesProposal,
+      "setbacks" | "uses_allowed" | "uses_forbidden"
+    >,
+    patch: Partial<PlanningNumericRuleProposal>,
+  ) {
+    changeRulesProposal({
+      [key]: {
+        ...planning.rules_proposal[key],
+        ...patch,
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function changeSetbackProposal(
+    key: keyof PlanningRulesProposal["setbacks"],
+    patch: Partial<PlanningNumericRuleProposal>,
+  ) {
+    changeRulesProposal({
+      setbacks: {
+        [key]: {
+          ...planning.rules_proposal.setbacks[key],
+          ...patch,
+        },
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function changeListProposal(
+    key: "uses_allowed" | "uses_forbidden",
+    patch: Partial<PlanningListRuleProposal>,
+  ) {
+    changeRulesProposal({
+      [key]: {
+        ...planning.rules_proposal[key],
+        ...patch,
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function parseNumericInput(value: string): number | null {
+    const normalized = value.replace(",", ".").trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  async function discoverComplementaryDocuments() {
+    setDiscoveringDocuments(true);
+    try {
+      const response = await fetch("/api/planning/discover", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          municipality: planning.municipality || site.municipality,
+          address: site.address,
+          cadastre_reference: site.cadastre_reference,
+          planning_url: planning.planning_url,
+          current_warnings: planning.review_notes
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean),
+        }),
+      });
+
+      const payload = (await response.json()) as DiscoverPlanningResponse & {
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ||
+            "No se pudo buscar documentacion complementaria automaticamente.",
+        );
+      }
+
+      const candidates = payload.candidates ?? [];
+      setDiscoveryCandidates(candidates);
+      setMessage(
+        candidates.length > 0
+          ? "Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela."
+          : payload.warnings[0] ||
+              "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo buscar documentacion complementaria automaticamente.",
+      );
+    } finally {
+      setDiscoveringDocuments(false);
+    }
+  }
+
+  function useDiscoveryCandidate(candidate: PlanningDiscoveryCandidate) {
+    changePlanning({
+      planning_url: candidate.url,
+      rules_confirmed_by_user: false,
+    });
+    setMessage(
+      "Documento propuesto cargado en Planning URL. Revisa la URL y pulsa Extraer normativa de URL cuando quieras procesarla.",
+    );
   }
 
   async function extractFromPdf() {
@@ -309,7 +444,7 @@ export function PlanningForm({
 
       if ((payload.linkCandidates?.length ?? 0) > 0) {
         setMessage(
-          "No se encontraron reglas claras en esta página. Se han encontrado documentos candidatos para revisar.",
+          "No se encontraron reglas claras en esta pagina. Se han encontrado documentos candidatos para revisar.",
         );
       }
     } catch (error) {
@@ -511,6 +646,208 @@ export function PlanningForm({
           />
         </label>
 
+        <div className="md:col-span-2 rounded-md border border-line bg-soft/60 p-4">
+          <p className="text-sm font-semibold text-ink">
+            Reglas detectadas para revision humana
+          </p>
+          <p className="mt-1 text-xs text-ink/70">
+            La propuesta mantiene confianza y extracto por campo. Edita los valores antes de confirmar la normativa.
+          </p>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <label>
+              <span className="label">Edificabilidad m2/m2</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.buildability_m2_m2.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("buildability_m2_m2", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.buildability_m2_m2.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.buildability_m2_m2.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Ocupacion %</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.occupancy_percent.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("occupancy_percent", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.occupancy_percent.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.occupancy_percent.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Altura maxima (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.max_height_m.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("max_height_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.max_height_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.max_height_m.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Numero maximo de plantas</span>
+              <input
+                className="field"
+                type="number"
+                step="1"
+                value={planning.rules_proposal.max_floors.value ?? ""}
+                onChange={(event) =>
+                  changeNumericProposal("max_floors", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.max_floors.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.max_floors.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Retranqueo frontal (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.setbacks.front_m.value ?? ""}
+                onChange={(event) =>
+                  changeSetbackProposal("front_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.setbacks.front_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.setbacks.front_m.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Retranqueo trasero (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.setbacks.rear_m.value ?? ""}
+                onChange={(event) =>
+                  changeSetbackProposal("rear_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.setbacks.rear_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.setbacks.rear_m.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Retranqueo lateral (m)</span>
+              <input
+                className="field"
+                type="number"
+                step="0.01"
+                value={planning.rules_proposal.setbacks.side_m.value ?? ""}
+                onChange={(event) =>
+                  changeSetbackProposal("side_m", {
+                    value: parseNumericInput(event.target.value),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.setbacks.side_m.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.setbacks.side_m.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Usos permitidos</span>
+              <textarea
+                className="field min-h-24"
+                value={planning.rules_proposal.uses_allowed.values.join("\n")}
+                onChange={(event) =>
+                  changeListProposal("uses_allowed", {
+                    values: event.target.value
+                      .split(/\r?\n|,/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.uses_allowed.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.uses_allowed.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+
+            <label>
+              <span className="label">Usos prohibidos</span>
+              <textarea
+                className="field min-h-24"
+                value={planning.rules_proposal.uses_forbidden.values.join("\n")}
+                onChange={(event) =>
+                  changeListProposal("uses_forbidden", {
+                    values: event.target.value
+                      .split(/\r?\n|,/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+              <span className="mt-1 block text-xs text-ink/60">
+                Confianza: {planning.rules_proposal.uses_forbidden.confidence}
+              </span>
+              <span className="mt-1 block text-xs text-ink/70">
+                {planning.rules_proposal.uses_forbidden.source_excerpt || "Sin extracto"}
+              </span>
+            </label>
+          </div>
+        </div>
+
         <label className="md:col-span-2">
           <span className="label">Review notes</span>
           <textarea
@@ -548,16 +885,16 @@ export function PlanningForm({
               {planningGuidance.description}
             </p>
             <div className="mt-3 flex flex-wrap gap-3">
-              {planningGuidance.showSearchAction && (
-                <button
-                  className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
-                  disabled={extractingUrl}
-                  onClick={() => void extractFromUrl()}
-                >
-                  Buscar documento urbanistico complementario
-                </button>
-              )}
+              <button
+                className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                disabled={discoveringDocuments}
+                onClick={() => void discoverComplementaryDocuments()}
+              >
+                {discoveringDocuments
+                  ? "Buscando..."
+                  : "Buscar ficha urbanistica / documento complementario"}
+              </button>
               <span className="text-sm text-ink/70">
                 Tambien puedes subir manualmente ficha urbanistica, PGOU o plano de zonificacion en Archivo normativa.
               </span>
@@ -565,10 +902,41 @@ export function PlanningForm({
           </div>
         )}
 
+        {discoveryCandidates.length > 0 && (
+          <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
+            <p className="mb-3 text-sm font-semibold text-ink">
+              Posibles documentos complementarios:
+            </p>
+            <div className="space-y-3">
+              {discoveryCandidates.map((candidate) => (
+                <div
+                  className="flex flex-col gap-3 rounded-md border border-line px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
+                  key={candidate.url}
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-ink">{candidate.title}</p>
+                    <p className="text-xs text-ink/60">{candidate.url}</p>
+                    <p className="mt-1 text-xs text-ink/70">
+                      {candidate.kind} / {candidate.confidence} / {candidate.reason}
+                    </p>
+                  </div>
+                  <button
+                    className="rounded-md border border-line bg-soft px-3 py-2 text-sm font-semibold text-ink"
+                    type="button"
+                    onClick={() => useDiscoveryCandidate(candidate)}
+                  >
+                    Usar este documento
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {linkCandidates.length > 0 && (
           <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
             <p className="mb-3 text-sm font-semibold text-ink">
-              No se encontraron reglas claras en la página inicial. Documentos candidatos:
+              No se encontraron reglas claras en la pagina inicial. Documentos candidatos:
             </p>
             <div className="space-y-3">
               {linkCandidates.map((candidate) => (
@@ -580,7 +948,7 @@ export function PlanningForm({
                     <p className="text-sm font-semibold text-ink">{candidate.title}</p>
                     <p className="text-xs text-ink/60">{candidate.url}</p>
                     <p className="mt-1 text-xs text-ink/70">
-                      {candidate.sourceType} · {candidate.confidence} · {candidate.reason}
+                      {candidate.sourceType} / {candidate.confidence} / {candidate.reason}
                     </p>
                   </div>
                   <button

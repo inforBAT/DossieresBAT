@@ -6,6 +6,7 @@ import {
   parseMetricNumber,
 } from "./planningNormalizer";
 import {
+  extractPlanningRulesProposalFromText,
   extractPlanningRulesFromText,
   type PlanningExtractionConfidence,
   type PlanningExtractionResult,
@@ -702,6 +703,7 @@ export async function interpretPlanningPdfWithAi(
 ): Promise<PlanningExtractionResult> {
   const selectedChunks = selectChunksForAi(ingestion);
   const sharedWarnings = selectedChunks.truncated ? [AI_TRUNCATION_WARNING] : [];
+  const rulesProposal = extractPlanningRulesProposalFromText(ingestion.raw_text);
 
   try {
     const aiPayload = await requestAiInterpretation(
@@ -739,6 +741,7 @@ export async function interpretPlanningPdfWithAi(
       zone: parseStringValue(aiPayload.zone),
       ordinance: parseStringValue(aiPayload.ordinance),
       rules,
+      rulesProposal,
       rawMatches: [],
       warnings,
       sourceArticles: buildAiSourceArticles(

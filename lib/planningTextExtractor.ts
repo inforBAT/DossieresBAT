@@ -5,7 +5,10 @@ import {
 } from "./planningNormalizer";
 import type {
   PlanningBlock,
+  PlanningListRuleProposal,
+  PlanningNumericRuleProposal,
   PlanningRules,
+  PlanningRulesProposal,
   PlanningSourceArticle,
 } from "./projectInputSchema";
 
@@ -27,6 +30,7 @@ export interface PlanningExtractionResult {
   zone: string;
   ordinance: string;
   rules: Partial<PlanningRules>;
+  rulesProposal: PlanningRulesProposal;
   rawMatches: ExtractedPlanningMatch[];
   warnings: string[];
   sourceArticles: PlanningSourceArticle[];
@@ -245,6 +249,216 @@ function extractMetricFromLines(
   return null;
 }
 
+function extractMetricFromLinesWithRegex(
+  lines: string[],
+  keywords: string[],
+  regex: RegExp,
+): MetricExtraction | null {
+  for (const line of lines) {
+    const normalized = line.toLocaleLowerCase("es");
+    if (!keywords.some((keyword) => normalized.includes(keyword))) {
+      continue;
+    }
+
+    const normalizedLine = normalizeLine(line);
+    const match = normalizedLine.match(regex);
+    if (!match) {
+      continue;
+    }
+
+    const displayValue = match[0].replace(/\s+/g, " ").trim();
+    const numericValue = parseMetricNumber(displayValue);
+    if (numericValue === null) {
+      continue;
+    }
+
+    return {
+      displayValue,
+      numericValue,
+      snippet: normalizedLine,
+      confidence: confidenceFromKeywords(line, keywords),
+    };
+  }
+
+  return null;
+}
+
+function emptyNumericRuleProposal(): PlanningNumericRuleProposal {
+  return {
+    value: null,
+    confidence: "low",
+    source_excerpt: "",
+  };
+}
+
+function emptyListRuleProposal(): PlanningListRuleProposal {
+  return {
+    values: [],
+    confidence: "low",
+    source_excerpt: "",
+  };
+}
+
+function buildNumericRuleProposal(
+  extraction: MetricExtraction | null,
+): PlanningNumericRuleProposal {
+  if (!extraction) {
+    return emptyNumericRuleProposal();
+  }
+
+  return {
+    value: extraction.numericValue,
+    confidence: extraction.confidence,
+    source_excerpt: extraction.snippet,
+  };
+}
+
+function extractFloorCount(
+  textExtraction: TextExtraction | null,
+): PlanningNumericRuleProposal {
+  if (!textExtraction) {
+    return emptyNumericRuleProposal();
+  }
+
+  const match = textExtraction.value.match(/\d+(?:[.,]\d+)?/);
+  if (!match) {
+    return {
+      value: null,
+      confidence: textExtraction.confidence,
+      source_excerpt: textExtraction.snippet,
+    };
+  }
+
+  return {
+    value: parseMetricNumber(match[0]),
+    confidence: textExtraction.confidence,
+    source_excerpt: textExtraction.snippet,
+  };
+}
+
+function splitRuleListValues(value: string): string[] {
+  return uniqueStrings(
+    value
+      .split(/[,;]|\by\b/gi)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+}
+
+function extractListRuleProposal(
+  lines: string[],
+  keywords: string[],
+): PlanningListRuleProposal {
+  const extraction = extractTextFieldFromLines(lines, keywords);
+  if (!extraction) {
+    return emptyListRuleProposal();
+  }
+
+  return {
+    values: splitRuleListValues(extraction.value),
+    confidence: extraction.confidence,
+    source_excerpt: extraction.snippet,
+  };
+}
+
+export function extractPlanningRulesProposalFromText(
+  text: string,
+): PlanningRulesProposal {
+  const lines = splitTextIntoLines(text);
+  const buildabilityRatio = extractMetricFromLinesWithRegex(
+    lines,
+    [
+      "edificabilidad",
+      "aprovechamiento",
+      "indice de edificabilidad",
+      "indice de aprovechamiento",
+    ],
+    /\d+(?:[.,]\d+)?\s*(?:m2|m²)\s*\/\s*(?:m2|m²)/i,
+  );
+  const occupancyPercent = extractMetricFromLinesWithRegex(
+    lines,
+    ["ocupacion maxima", "ocupacion", "porcentaje de ocupacion"],
+    /\d+(?:[.,]\d+)?\s*%/i,
+  );
+  const maxHeightMetric =
+    extractMetricFromLines(
+      lines,
+      ["altura maxima", "altura total", "altura reguladora"],
+      "m",
+    ) ??
+    extractMetricFromLines(lines, ["altura a cumbrera", "cumbrera"], "m") ??
+    extractMetricFromLines(lines, ["altura al alero", "alero"], "m");
+  const maxFloors = extractTextFieldFromLines(
+    lines,
+    [
+      "numero maximo de plantas",
+      "maximo de plantas",
+      "plantas maximas",
+      "alturas",
+    ],
+  );
+  const setbackFront = extractMetricFromLines(
+    lines,
+    [
+      "retranqueo frontal",
+      "retranqueo a calle",
+      "retranqueo a vial",
+      "alineacion",
+      "frente",
+      "fachada principal",
+    ],
+    "m",
+  );
+  const setbackRear = extractMetricFromLines(
+    lines,
+    [
+      "retranqueo posterior",
+      "retranqueo trasero",
+      "retranqueo al fondo",
+      "fondo de parcela",
+      "fondo",
+    ],
+    "m",
+  );
+  const setbackSide = extractMetricFromLines(
+    lines,
+    [
+      "retranqueo lateral",
+      "retranqueo a linderos",
+      "retranqueo a lindero",
+      "lateral",
+      "lindero",
+      "linderos",
+    ],
+    "m",
+  );
+
+  return {
+    max_height_m: buildNumericRuleProposal(maxHeightMetric),
+    max_floors: extractFloorCount(maxFloors),
+    buildability_m2_m2: buildNumericRuleProposal(buildabilityRatio),
+    occupancy_percent: buildNumericRuleProposal(occupancyPercent),
+    setbacks: {
+      front_m: buildNumericRuleProposal(setbackFront),
+      rear_m: buildNumericRuleProposal(setbackRear),
+      side_m: buildNumericRuleProposal(setbackSide),
+    },
+    uses_allowed: extractListRuleProposal(lines, [
+      "usos permitidos",
+      "uso permitido",
+      "usos autorizados",
+      "uso caracteristico",
+      "uso compatible",
+    ]),
+    uses_forbidden: extractListRuleProposal(lines, [
+      "usos prohibidos",
+      "uso prohibido",
+      "usos incompatibles",
+      "uso no permitido",
+    ]),
+  };
+}
+
 function extractTextFieldFromLines(
   lines: string[],
   keywords: string[],
@@ -329,6 +543,7 @@ export function extractPlanningRulesFromText(
 ): PlanningExtractionResult {
   const lines = splitTextIntoLines(text);
   const matches: ExtractedPlanningMatch[] = [];
+  const rulesProposal = extractPlanningRulesProposalFromText(text);
 
   const zone = extractTextFieldFromLines(lines, ["zona urban", "zona:"]);
   const ordinance = extractTextFieldFromLines(lines, ["ordenanza", "ord."]);
@@ -491,6 +706,7 @@ export function extractPlanningRulesFromText(
           ? formatMeters(setbackStreet.numericValue)
           : "",
     },
+    rulesProposal,
     rawMatches: matches,
     warnings,
     sourceArticles,
@@ -535,6 +751,7 @@ export function applyPlanningExtractionProposal(
 ): AppliedPlanningExtraction {
   const nextPlanning: PlanningBlock = {
     ...planning,
+    rules_proposal: result.rulesProposal,
     source_articles: uniqueSourceArticles([
       ...planning.source_articles,
       ...result.sourceArticles,
