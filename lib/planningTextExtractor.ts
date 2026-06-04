@@ -275,7 +275,8 @@ function extractMetricFromLinesWithRegex(
     }
 
     const displayValue = match[0].replace(/\s+/g, " ").trim();
-    const numericValue = parseMetricNumber(displayValue);
+    const numericToken = displayValue.match(/\d+(?:[.,]\d+)?/)?.[0] ?? "";
+    const numericValue = parseMetricNumber(numericToken);
     if (numericValue === null) {
       continue;
     }
