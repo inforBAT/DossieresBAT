@@ -3,20 +3,21 @@
 import { useState } from "react";
 import { normalizeUploadedFile } from "@/lib/normalizeUploadedFile";
 import {
+  applyAcceptedPlanningRulesProposal,
   applyPlanningExtractionProposal,
   hasClearPlanningSourceArticles,
   needsComplementaryPlanningDocuments,
   type PlanningExtractionResult,
 } from "@/lib/planningTextExtractor";
-import type { PlanningDiscoveryCandidate } from "@/lib/planningDiscovery";
 import type { PlanningLinkCandidate } from "@/lib/planningUrlCandidates";
 import type {
   AssetsBlock,
   PlanningBlock,
   PlanningListRuleProposal,
   PlanningNumericRuleProposal,
-  PlanningRulesProposal,
+  PlanningRuleProposalStatus,
   PlanningRules,
+  PlanningRulesProposal,
   SiteBlock,
   UploadedAsset,
 } from "@/lib/projectInputSchema";
@@ -45,8 +46,9 @@ interface ExtractFromPdfResponse {
 }
 
 interface DiscoverPlanningResponse {
-  candidates: PlanningDiscoveryCandidate[];
-  warnings: string[];
+  candidates?: PlanningLinkCandidate[];
+  warnings?: string[];
+  error?: string;
 }
 
 interface PlanningGuidanceState {
@@ -105,6 +107,25 @@ function buildPlanningGuidance(
   };
 }
 
+function statusLabel(status: PlanningRuleProposalStatus): string {
+  switch (status) {
+    case "accepted":
+      return "Aceptada";
+    case "rejected":
+      return "Rechazada";
+    case "edited":
+      return "Editada";
+    default:
+      return "Propuesta";
+  }
+}
+
+function nextEditedStatus(
+  current: PlanningRuleProposalStatus,
+): PlanningRuleProposalStatus {
+  return current === "accepted" ? "accepted" : "edited";
+}
+
 export function PlanningForm({
   assets,
   planning,
@@ -115,12 +136,9 @@ export function PlanningForm({
   const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
   const [extractingPdf, setExtractingPdf] = useState(false);
   const [extractingUrl, setExtractingUrl] = useState(false);
-  const [discoveringDocuments, setDiscoveringDocuments] = useState(false);
+  const [discoveringPlanning, setDiscoveringPlanning] = useState(false);
   const [processingCandidateUrl, setProcessingCandidateUrl] = useState("");
   const [linkCandidates, setLinkCandidates] = useState<PlanningLinkCandidate[]>([]);
-  const [discoveryCandidates, setDiscoveryCandidates] = useState<
-    PlanningDiscoveryCandidate[]
-  >([]);
   const [planningGuidance, setPlanningGuidance] =
     useState<PlanningGuidanceState | null>(null);
 
@@ -173,11 +191,94 @@ export function PlanningForm({
     }
   }
 
+  function updateRulesProposal(nextRulesProposal: PlanningRulesProposal) {
+    onChange({
+      planning: {
+        ...planning,
+        status: "processed_needs_review",
+        rules_confirmed_by_user: false,
+        rules_proposal: nextRulesProposal,
+      },
+    });
+  }
+
+  function changeRulesProposal(patch: Partial<PlanningRulesProposal>) {
+    updateRulesProposal({
+      ...planning.rules_proposal,
+      ...patch,
+      setbacks: {
+        ...planning.rules_proposal.setbacks,
+        ...patch.setbacks,
+      },
+    });
+  }
+
+  function changeNumericProposal(
+    key: Exclude<
+      keyof PlanningRulesProposal,
+      "setbacks" | "uses_allowed" | "uses_forbidden"
+    >,
+    patch: Partial<PlanningNumericRuleProposal>,
+  ) {
+    changeRulesProposal({
+      [key]: {
+        ...planning.rules_proposal[key],
+        ...patch,
+        status:
+          patch.status ??
+          nextEditedStatus(planning.rules_proposal[key].status),
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function changeSetbackProposal(
+    key: keyof PlanningRulesProposal["setbacks"],
+    patch: Partial<PlanningNumericRuleProposal>,
+  ) {
+    changeRulesProposal({
+      setbacks: {
+        [key]: {
+          ...planning.rules_proposal.setbacks[key],
+          ...patch,
+          status:
+            patch.status ??
+            nextEditedStatus(planning.rules_proposal.setbacks[key].status),
+        },
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function changeListProposal(
+    key: "uses_allowed" | "uses_forbidden",
+    patch: Partial<PlanningListRuleProposal>,
+  ) {
+    changeRulesProposal({
+      [key]: {
+        ...planning.rules_proposal[key],
+        ...patch,
+        status:
+          patch.status ??
+          nextEditedStatus(planning.rules_proposal[key].status),
+      },
+    } as Partial<PlanningRulesProposal>);
+  }
+
+  function parseNumericInput(value: string): number | null {
+    const normalized = value.replace(",", ".").trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function applyExtractionResult(
     sourceLabel: string,
     extraction: PlanningExtractionResult,
+    planningBase: PlanningBlock = planning,
   ) {
-    const applied = applyPlanningExtractionProposal(planning, extraction);
+    const applied = applyPlanningExtractionProposal(planningBase, extraction);
     changePlanning(applied.planning);
     setPlanningGuidance(buildPlanningGuidance(extraction));
 
@@ -200,13 +301,6 @@ export function PlanningForm({
       return;
     }
 
-    if (applied.appliedFields.length > 0) {
-      setMessage(
-        `Normativa extraida desde ${sourceLabel}. Revisa los valores antes de confirmar.`,
-      );
-      return;
-    }
-
     if (extraction.confidence === "low" && !hasClearSources) {
       setMessage(
         "La lectura del PDF es de confianza baja y no aporta citas claras. Revisa las notas y busca documentacion complementaria.",
@@ -214,140 +308,25 @@ export function PlanningForm({
       return;
     }
 
-    if (applied.conflictFields.length > 0 || planning.rules_confirmed_by_user) {
+    setMessage(
+      `Normativa extraida desde ${sourceLabel}. Revisa, acepta o rechaza las reglas detectadas antes de aplicarlas a la normativa final.`,
+    );
+  }
+
+  function applyAcceptedRules() {
+    const applied = applyAcceptedPlanningRulesProposal(planning);
+    changePlanning(applied.planning);
+
+    if (applied.appliedFields.length > 0) {
       setMessage(
-        "Se detectaron valores, pero se han mantenido los existentes. Revisa las notas de normativa.",
+        `Se aplicaron reglas aceptadas: ${applied.appliedFields.join(", ")}.`,
       );
       return;
     }
 
-    setMessage("Se analizo la normativa, pero no habia campos nuevos que aplicar.");
-  }
-
-  function changeRulesProposal(patch: Partial<PlanningRulesProposal>) {
-    onChange({
-      planning: {
-        ...planning,
-        rules_proposal: {
-          ...planning.rules_proposal,
-          ...patch,
-          setbacks: {
-            ...planning.rules_proposal.setbacks,
-            ...patch.setbacks,
-          },
-        },
-      },
-    });
-  }
-
-  function changeNumericProposal(
-    key: Exclude<
-      keyof PlanningRulesProposal,
-      "setbacks" | "uses_allowed" | "uses_forbidden"
-    >,
-    patch: Partial<PlanningNumericRuleProposal>,
-  ) {
-    changeRulesProposal({
-      [key]: {
-        ...planning.rules_proposal[key],
-        ...patch,
-      },
-    } as Partial<PlanningRulesProposal>);
-  }
-
-  function changeSetbackProposal(
-    key: keyof PlanningRulesProposal["setbacks"],
-    patch: Partial<PlanningNumericRuleProposal>,
-  ) {
-    changeRulesProposal({
-      setbacks: {
-        [key]: {
-          ...planning.rules_proposal.setbacks[key],
-          ...patch,
-        },
-      },
-    } as Partial<PlanningRulesProposal>);
-  }
-
-  function changeListProposal(
-    key: "uses_allowed" | "uses_forbidden",
-    patch: Partial<PlanningListRuleProposal>,
-  ) {
-    changeRulesProposal({
-      [key]: {
-        ...planning.rules_proposal[key],
-        ...patch,
-      },
-    } as Partial<PlanningRulesProposal>);
-  }
-
-  function parseNumericInput(value: string): number | null {
-    const normalized = value.replace(",", ".").trim();
-    if (!normalized) {
-      return null;
-    }
-
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  async function discoverComplementaryDocuments() {
-    setDiscoveringDocuments(true);
-    try {
-      const response = await fetch("/api/planning/discover", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          municipality: planning.municipality || site.municipality,
-          address: site.address,
-          cadastre_reference: site.cadastre_reference,
-          planning_url: planning.planning_url,
-          current_warnings: planning.review_notes
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean),
-        }),
-      });
-
-      const payload = (await response.json()) as DiscoverPlanningResponse & {
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(
-          payload.error ||
-            "No se pudo buscar documentacion complementaria automaticamente.",
-        );
-      }
-
-      const candidates = payload.candidates ?? [];
-      setDiscoveryCandidates(candidates);
-      setMessage(
-        candidates.length > 0
-          ? "Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela."
-          : payload.warnings[0] ||
-              "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
-      );
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "No se pudo buscar documentacion complementaria automaticamente.",
-      );
-    } finally {
-      setDiscoveringDocuments(false);
-    }
-  }
-
-  function useDiscoveryCandidate(candidate: PlanningDiscoveryCandidate) {
-    changePlanning({
-      planning_url: candidate.url,
-      rules_confirmed_by_user: false,
-    });
     setMessage(
-      "Documento propuesto cargado en Planning URL. Revisa la URL y pulsa Extraer normativa de URL cuando quieras procesarla.",
+      applied.warnings[0] ||
+        "No habia reglas aceptadas con equivalencias seguras para aplicar.",
     );
   }
 
@@ -424,7 +403,9 @@ export function PlanningForm({
     const payload = (await response.json()) as ExtractFromUrlResponse;
 
     if (!response.ok || !payload.extraction) {
-      throw new Error(payload.error || "No se pudo extraer normativa desde la URL.");
+      throw new Error(
+        payload.error || "No se pudo extraer normativa desde la URL.",
+      );
     }
 
     return payload;
@@ -458,12 +439,74 @@ export function PlanningForm({
     }
   }
 
+  async function discoverComplementaryDocuments() {
+    setDiscoveringPlanning(true);
+    try {
+      const response = await fetch("/api/planning/discover", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          municipality: planning.municipality || site.municipality,
+          address: site.address,
+          cadastre_reference: site.cadastre_reference,
+          planning_url: planning.planning_url,
+          current_warnings: planning.review_notes
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean),
+        }),
+      });
+      const payload = (await response.json()) as DiscoverPlanningResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ||
+            "No se pudieron buscar documentos complementarios.",
+        );
+      }
+
+      setLinkCandidates(payload.candidates ?? []);
+      setMessage(
+        (payload.candidates?.length ?? 0) > 0
+          ? "Se han encontrado posibles documentos complementarios. Revisa y elige la fuente mas fiable."
+          : payload.warnings?.[0] ||
+              "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron buscar documentos complementarios.",
+      );
+    } finally {
+      setDiscoveringPlanning(false);
+    }
+  }
+
+  function useLinkCandidate(candidate: PlanningLinkCandidate) {
+    changePlanning({
+      planning_url: candidate.url,
+      status: "processed_needs_review",
+      rules_confirmed_by_user: false,
+    });
+    setMessage(
+      "Se ha seleccionado un documento candidato. Revisa la URL y ejecuta Extraer normativa de URL cuando quieras analizarlo.",
+    );
+  }
+
   async function processLinkCandidate(candidate: PlanningLinkCandidate) {
     setProcessingCandidateUrl(candidate.url);
     try {
+      const planningBase: PlanningBlock = {
+        ...planning,
+        planning_url: candidate.url,
+      };
+      changePlanning({ planning_url: candidate.url });
       const payload = await requestUrlExtraction(candidate.url);
       setLinkCandidates(payload.linkCandidates ?? []);
-      applyExtractionResult(candidate.title, payload.extraction!);
+      applyExtractionResult(candidate.title, payload.extraction!, planningBase);
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -473,6 +516,35 @@ export function PlanningForm({
     } finally {
       setProcessingCandidateUrl("");
     }
+  }
+
+  function renderProposalActions(
+    title: string,
+    status: PlanningRuleProposalStatus,
+    onAccept: () => void,
+    onReject: () => void,
+  ) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="rounded-full border border-line bg-white px-2 py-1 text-xs font-semibold text-ink">
+          {title}: {statusLabel(status)}
+        </span>
+        <button
+          className="rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink"
+          type="button"
+          onClick={onAccept}
+        >
+          Aceptar
+        </button>
+        <button
+          className="rounded-md border border-line bg-soft px-3 py-1.5 text-xs font-semibold text-ink"
+          type="button"
+          onClick={onReject}
+        >
+          Rechazar
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -647,12 +719,23 @@ export function PlanningForm({
         </label>
 
         <div className="md:col-span-2 rounded-md border border-line bg-soft/60 p-4">
-          <p className="text-sm font-semibold text-ink">
-            Reglas detectadas para revision humana
-          </p>
-          <p className="mt-1 text-xs text-ink/70">
-            La propuesta mantiene confianza y extracto por campo. Edita los valores antes de confirmar la normativa.
-          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-ink">
+                Reglas detectadas para revision humana
+              </p>
+              <p className="mt-1 text-xs text-ink/70">
+                Revisa cada propuesta, acepta o rechaza, y luego aplica solo las equivalencias seguras a la normativa final.
+              </p>
+            </div>
+            <button
+              className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink"
+              type="button"
+              onClick={applyAcceptedRules}
+            >
+              Aplicar reglas aceptadas a normativa
+            </button>
+          </div>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <label>
@@ -674,6 +757,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.buildability_m2_m2.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.buildability_m2_m2.status,
+                () => changeNumericProposal("buildability_m2_m2", { status: "accepted" }),
+                () => changeNumericProposal("buildability_m2_m2", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -695,6 +784,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.occupancy_percent.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.occupancy_percent.status,
+                () => changeNumericProposal("occupancy_percent", { status: "accepted" }),
+                () => changeNumericProposal("occupancy_percent", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -716,6 +811,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.max_height_m.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.max_height_m.status,
+                () => changeNumericProposal("max_height_m", { status: "accepted" }),
+                () => changeNumericProposal("max_height_m", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -737,6 +838,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.max_floors.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.max_floors.status,
+                () => changeNumericProposal("max_floors", { status: "accepted" }),
+                () => changeNumericProposal("max_floors", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -758,6 +865,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.setbacks.front_m.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.setbacks.front_m.status,
+                () => changeSetbackProposal("front_m", { status: "accepted" }),
+                () => changeSetbackProposal("front_m", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -779,6 +892,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.setbacks.rear_m.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.setbacks.rear_m.status,
+                () => changeSetbackProposal("rear_m", { status: "accepted" }),
+                () => changeSetbackProposal("rear_m", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -800,6 +919,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.setbacks.side_m.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.setbacks.side_m.status,
+                () => changeSetbackProposal("side_m", { status: "accepted" }),
+                () => changeSetbackProposal("side_m", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -822,6 +947,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.uses_allowed.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.uses_allowed.status,
+                () => changeListProposal("uses_allowed", { status: "accepted" }),
+                () => changeListProposal("uses_allowed", { status: "rejected" }),
+              )}
             </label>
 
             <label>
@@ -844,6 +975,12 @@ export function PlanningForm({
               <span className="mt-1 block text-xs text-ink/70">
                 {planning.rules_proposal.uses_forbidden.source_excerpt || "Sin extracto"}
               </span>
+              {renderProposalActions(
+                "Estado",
+                planning.rules_proposal.uses_forbidden.status,
+                () => changeListProposal("uses_forbidden", { status: "accepted" }),
+                () => changeListProposal("uses_forbidden", { status: "rejected" }),
+              )}
             </label>
           </div>
         </div>
@@ -871,7 +1008,9 @@ export function PlanningForm({
           <button
             className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
-            disabled={extractingUrl || !planning.planning_url.trim()}
+            disabled={
+              extractingUrl || discoveringPlanning || !planning.planning_url.trim()
+            }
             onClick={() => void extractFromUrl()}
           >
             {extractingUrl ? "Extrayendo URL..." : "Extraer normativa de URL"}
@@ -888,11 +1027,11 @@ export function PlanningForm({
               <button
                 className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
                 type="button"
-                disabled={discoveringDocuments}
+                disabled={discoveringPlanning || extractingUrl}
                 onClick={() => void discoverComplementaryDocuments()}
               >
-                {discoveringDocuments
-                  ? "Buscando..."
+                {discoveringPlanning
+                  ? "Buscando documentos..."
                   : "Buscar ficha urbanistica / documento complementario"}
               </button>
               <span className="text-sm text-ink/70">
@@ -902,41 +1041,10 @@ export function PlanningForm({
           </div>
         )}
 
-        {discoveryCandidates.length > 0 && (
-          <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
-            <p className="mb-3 text-sm font-semibold text-ink">
-              Posibles documentos complementarios:
-            </p>
-            <div className="space-y-3">
-              {discoveryCandidates.map((candidate) => (
-                <div
-                  className="flex flex-col gap-3 rounded-md border border-line px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
-                  key={candidate.url}
-                >
-                  <div>
-                    <p className="text-sm font-semibold text-ink">{candidate.title}</p>
-                    <p className="text-xs text-ink/60">{candidate.url}</p>
-                    <p className="mt-1 text-xs text-ink/70">
-                      {candidate.kind} / {candidate.confidence} / {candidate.reason}
-                    </p>
-                  </div>
-                  <button
-                    className="rounded-md border border-line bg-soft px-3 py-2 text-sm font-semibold text-ink"
-                    type="button"
-                    onClick={() => useDiscoveryCandidate(candidate)}
-                  >
-                    Usar este documento
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {linkCandidates.length > 0 && (
           <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
             <p className="mb-3 text-sm font-semibold text-ink">
-              No se encontraron reglas claras en la pagina inicial. Documentos candidatos:
+              Se han encontrado documentos candidatos. Revisa y elige el que mejor encaje con la parcela.
             </p>
             <div className="space-y-3">
               {linkCandidates.map((candidate) => (
@@ -948,19 +1056,32 @@ export function PlanningForm({
                     <p className="text-sm font-semibold text-ink">{candidate.title}</p>
                     <p className="text-xs text-ink/60">{candidate.url}</p>
                     <p className="mt-1 text-xs text-ink/70">
-                      {candidate.sourceType} / {candidate.confidence} / {candidate.reason}
+                      {candidate.kind} · {candidate.confidence} · {candidate.reason}
+                    </p>
+                    <p className="mt-1 text-xs text-ink/60">
+                      Fuente: {candidate.source}
                     </p>
                   </div>
-                  <button
-                    className="rounded-md border border-line bg-soft px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                    type="button"
-                    disabled={processingCandidateUrl === candidate.url}
-                    onClick={() => void processLinkCandidate(candidate)}
-                  >
-                    {processingCandidateUrl === candidate.url
-                      ? "Procesando..."
-                      : "Procesar"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      type="button"
+                      disabled={processingCandidateUrl === candidate.url}
+                      onClick={() => useLinkCandidate(candidate)}
+                    >
+                      Usar este documento
+                    </button>
+                    <button
+                      className="rounded-md border border-line bg-soft px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      type="button"
+                      disabled={processingCandidateUrl === candidate.url}
+                      onClick={() => void processLinkCandidate(candidate)}
+                    >
+                      {processingCandidateUrl === candidate.url
+                        ? "Procesando..."
+                        : "Extraer ahora"}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

@@ -30,6 +30,13 @@ export const PLANNING_RULE_CONFIDENCES = [
   "high",
 ] as const;
 
+export const PLANNING_RULE_PROPOSAL_STATUSES = [
+  "proposed",
+  "edited",
+  "accepted",
+  "rejected",
+] as const;
+
 export const GRAPHIC_TYPES = [
   "parcel_base",
   "parcel_setbacks",
@@ -77,6 +84,8 @@ export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
 export type RequirementSeverity = (typeof REQUIREMENT_SEVERITIES)[number];
 export type PlanningRuleConfidence =
   (typeof PLANNING_RULE_CONFIDENCES)[number];
+export type PlanningRuleProposalStatus =
+  (typeof PLANNING_RULE_PROPOSAL_STATUSES)[number];
 export type GraphicType = (typeof GRAPHIC_TYPES)[number];
 export type AnalysisStatus = (typeof ANALYSIS_STATUSES)[number];
 export type GraphicStatus = (typeof GRAPHIC_STATUSES)[number];
@@ -208,12 +217,14 @@ export interface PlanningNumericRuleProposal {
   value: number | null;
   confidence: PlanningRuleConfidence;
   source_excerpt: string;
+  status: PlanningRuleProposalStatus;
 }
 
 export interface PlanningListRuleProposal {
   values: string[];
   confidence: PlanningRuleConfidence;
   source_excerpt: string;
+  status: PlanningRuleProposalStatus;
 }
 
 export interface PlanningRulesProposal {
@@ -545,48 +556,57 @@ export const EMPTY_PROJECT_INPUT_V2: ProjectInputV2 = {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        status: "proposed",
       },
       max_floors: {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        status: "proposed",
       },
       buildability_m2_m2: {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        status: "proposed",
       },
       occupancy_percent: {
         value: null,
         confidence: "low",
         source_excerpt: "",
+        status: "proposed",
       },
       setbacks: {
         front_m: {
           value: null,
           confidence: "low",
           source_excerpt: "",
+          status: "proposed",
         },
         rear_m: {
           value: null,
           confidence: "low",
           source_excerpt: "",
+          status: "proposed",
         },
         side_m: {
           value: null,
           confidence: "low",
           source_excerpt: "",
+          status: "proposed",
         },
       },
       uses_allowed: {
         values: [],
         confidence: "low",
         source_excerpt: "",
+        status: "proposed",
       },
       uses_forbidden: {
         values: [],
         confidence: "low",
         source_excerpt: "",
+        status: "proposed",
       },
     },
     source_articles: [],

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { buildProjectInput } from "./buildProjectInput";
 import {
+  applyAcceptedPlanningRulesProposal,
   applyPlanningExtractionProposal,
   extractPlanningRulesFromText,
 } from "./planningTextExtractor";
@@ -37,6 +38,7 @@ assert.equal(extraction.zone, "UAD-5");
 assert.equal(extraction.ordinance, "Residencial extensiva");
 assert.equal(extraction.rulesProposal.buildability_m2_m2.value, 0.35);
 assert.equal(extraction.rulesProposal.occupancy_percent.value, 30);
+assert.equal(extraction.rulesProposal.occupancy_percent.status, "proposed");
 assert.equal(extraction.rulesProposal.setbacks.front_m.value, 5);
 assert.equal(extraction.rulesProposal.setbacks.rear_m.value, 6);
 assert.equal(extraction.rulesProposal.setbacks.side_m.value, 4);
@@ -53,12 +55,61 @@ const base = buildProjectInput({
 
 const applied = applyPlanningExtractionProposal(base.planning, extraction);
 
-assert.equal(applied.planning.rules.buildability_total_m2, 295.29);
-assert.equal(applied.planning.rules.setback_boundary_m, 4);
-assert.equal(applied.planning.rules.max_height_eaves_m, 6.5);
+assert.equal(applied.planning.rules.buildability_total_m2, null);
+assert.equal(applied.planning.rules.setback_boundary_m, null);
+assert.equal(applied.planning.rules.max_height_eaves_m, null);
 assert.equal(applied.planning.zone, "UAD-5");
 assert.equal(applied.planning.rules_confirmed_by_user, false);
 assert.equal(applied.planning.rules_proposal.occupancy_percent.value, 30);
+assert.equal(applied.planning.status, "processed_needs_review");
+
+const accepted = buildProjectInput({
+  planning: {
+    rules_proposal: {
+      max_floors: {
+        value: 2,
+        confidence: "high",
+        source_excerpt: "maximo 2 plantas",
+        status: "accepted",
+      },
+      occupancy_percent: {
+        value: 30,
+        confidence: "high",
+        source_excerpt: "ocupacion maxima 30%",
+        status: "accepted",
+      },
+      setbacks: {
+        front_m: {
+          value: 5,
+          confidence: "high",
+          source_excerpt: "retranqueo a calle 5 m",
+          status: "accepted",
+        },
+      },
+    },
+  },
+});
+
+const acceptedApplied = applyAcceptedPlanningRulesProposal(accepted.planning);
+assert.equal(acceptedApplied.planning.rules.max_floors, "2");
+assert.equal(acceptedApplied.planning.rules.occupancy, "30%");
+assert.equal(acceptedApplied.planning.rules.setback_street_m, 5);
+assert.equal(acceptedApplied.planning.rules_confirmed_by_user, false);
+assert.equal(acceptedApplied.planning.status, "processed_needs_review");
+
+const candidateBase = buildProjectInput({
+  planning: {
+    planning_url: "https://example.com/ficha-urbanistica.pdf",
+  },
+});
+const candidateApplied = applyPlanningExtractionProposal(
+  candidateBase.planning,
+  extraction,
+);
+assert.equal(
+  candidateApplied.planning.planning_url,
+  "https://example.com/ficha-urbanistica.pdf",
+);
 
 const confirmed = buildProjectInput({
   planning: {

@@ -8,12 +8,14 @@ import {
   LAYOUT_PLAN_STATUSES,
   OVERFLOW_POLICIES,
   PLANNING_RULE_CONFIDENCES,
+  PLANNING_RULE_PROPOSAL_STATUSES,
   WORKFLOW_STATUSES,
   type AssetCategory,
   type AssetsBlock,
   type PlanningListRuleProposal,
   type PlanningNumericRuleProposal,
   type PlanningRuleConfidence,
+  type PlanningRuleProposalStatus,
   type DossieresWebhookPayload,
   type AnalysisStatus,
   type GraphicFormat,
@@ -204,6 +206,16 @@ function normalizePlanningRuleConfidence(
     : "low";
 }
 
+function normalizePlanningRuleProposalStatus(
+  status: unknown,
+): PlanningRuleProposalStatus {
+  return PLANNING_RULE_PROPOSAL_STATUSES.includes(
+    status as PlanningRuleProposalStatus,
+  )
+    ? (status as PlanningRuleProposalStatus)
+    : "proposed";
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -228,6 +240,7 @@ function normalizeNumericRuleProposal(
     value: typeof candidate.value === "number" ? candidate.value : null,
     confidence: normalizePlanningRuleConfidence(candidate.confidence),
     source_excerpt: stringValue(candidate.source_excerpt),
+    status: normalizePlanningRuleProposalStatus(candidate.status),
   };
 }
 
@@ -245,6 +258,7 @@ function normalizeListRuleProposal(
     values: stringArray(candidate.values),
     confidence: normalizePlanningRuleConfidence(candidate.confidence),
     source_excerpt: stringValue(candidate.source_excerpt),
+    status: normalizePlanningRuleProposalStatus(candidate.status),
   };
 }
 

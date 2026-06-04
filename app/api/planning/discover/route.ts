@@ -1,11 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  buildPlanningDiscoveryCandidates,
-  type PlanningDiscoveryCandidate,
-  mapLinkCandidatesToDiscoveryCandidates,
-} from "@/lib/planningDiscovery";
-import { extractPlanningLinkCandidatesFromHtml } from "@/lib/planningUrlCandidates";
-import { fetchTextFromPublicUrl } from "@/lib/safeUrlFetch";
+import { discoverPlanningCandidates } from "@/lib/planningDiscover";
 
 export const runtime = "nodejs";
 
@@ -18,49 +12,22 @@ interface PlanningDiscoverRequest {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as PlanningDiscoverRequest;
-  const warnings: string[] = [];
-  const contextualCandidates = buildPlanningDiscoveryCandidates(body);
-  const planningUrl = body.planning_url?.trim() ?? "";
-  let linkedCandidates: PlanningDiscoveryCandidate[] = [];
+  try {
+    const body = (await request.json()) as PlanningDiscoverRequest;
+    const result = await discoverPlanningCandidates({
+      municipality: body.municipality,
+      address: body.address,
+      cadastreReference: body.cadastre_reference,
+      planningUrl: body.planning_url,
+      currentWarnings: body.current_warnings,
+    });
 
-  if (planningUrl) {
-    try {
-      const fetched = await fetchTextFromPublicUrl(planningUrl);
-      linkedCandidates = fetched.contentType.includes("html")
-        ? mapLinkCandidatesToDiscoveryCandidates(
-            extractPlanningLinkCandidatesFromHtml(fetched.text, fetched.url),
-          )
-        : [];
-    } catch (error) {
-      warnings.push(
-        error instanceof Error
-          ? error.message
-          : "No se pudo revisar la URL inicial de normativa.",
-      );
-    }
+    return NextResponse.json(result);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "No se pudieron buscar documentos complementarios.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
-
-  const candidates = [...linkedCandidates, ...contextualCandidates].filter(
-    (candidate, index, all) =>
-      all.findIndex(
-        (other) =>
-          other.url.trim().toLowerCase() === candidate.url.trim().toLowerCase(),
-      ) === index,
-  );
-
-  if (candidates.length === 0) {
-    warnings.push(
-      "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
-    );
-  } else {
-    warnings.push(
-      "Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela.",
-    );
-  }
-
-  return NextResponse.json({
-    candidates,
-    warnings,
-  });
 }
