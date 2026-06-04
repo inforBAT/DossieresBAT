@@ -74,19 +74,37 @@ function inferCandidateKind(
   return "unknown";
 }
 
-function buildSearchQueries(input: PlanningDiscoveryInput): string[] {
+export function buildSearchQueries(input: PlanningDiscoveryInput): string[] {
   const municipality = input.municipality?.trim() ?? "";
   const address = input.address?.trim() ?? "";
   const cadastreReference = input.cadastreReference?.trim() ?? "";
-  const locationHint = address || cadastreReference || "parcela";
+  const locationHint = address || cadastreReference;
 
-  return [
-    `${municipality} ficha urbanistica ${locationHint}`.trim(),
-    `${municipality} PGOU plano zonificacion ${locationHint}`.trim(),
-    `${municipality} normas subsidiarias ficha urbanistica`.trim(),
-    `${municipality} ordenanza zona ${cadastreReference}`.trim(),
-    `${municipality} planeamiento urbanistico visor`.trim(),
-  ].filter((query, index, list) => hasText(query) && list.indexOf(query) === index);
+  if (!hasText(municipality) && !hasText(locationHint)) {
+    return [];
+  }
+
+  const queries = [
+    hasText(locationHint)
+      ? `${municipality} ficha urbanistica ${locationHint}`.trim()
+      : "",
+    hasText(locationHint)
+      ? `${municipality} PGOU plano zonificacion ${locationHint}`.trim()
+      : "",
+    hasText(municipality)
+      ? `${municipality} normas subsidiarias ficha urbanistica`.trim()
+      : "",
+    hasText(cadastreReference)
+      ? `${municipality} ordenanza zona ${cadastreReference}`.trim()
+      : "",
+    hasText(municipality)
+      ? `${municipality} planeamiento urbanistico visor`.trim()
+      : "",
+  ];
+
+  return queries.filter(
+    (query, index, list) => hasText(query) && list.indexOf(query) === index,
+  );
 }
 
 function unwrapSearchResultUrl(url: URL): URL {
