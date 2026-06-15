@@ -85,16 +85,17 @@ const INSUFFICIENT_WARNING_PATTERNS = [
   "falta ficha de zona",
 ];
 const MISSING_DATA_HINT_PATTERNS = [
-  /fichas?\s+urbanisticas?/i,
-  /ficha\s+de\s+zona/i,
-  /documento\s+complementario/i,
-  /planeamiento\s+de\s+desarrollo/i,
-  /plan\s+parcial/i,
-  /estudio\s+de\s+detalle/i,
-  /se\s+define\s+en/i,
-  /se\s+determina\s+en/i,
-  /remite\s+a/i,
-  /segun\s+ficha/i,
+  "ficha urbanistica",
+  "fichas urbanisticas",
+  "ficha de zona",
+  "documento complementario",
+  "planeamiento de desarrollo",
+  "plan parcial",
+  "estudio de detalle",
+  "se define en",
+  "se determina en",
+  "remite a",
+  "segun ficha",
 ];
 
 function hasText(value: string | null | undefined): value is string {
@@ -190,6 +191,11 @@ function appendText(base: string, additions: string[]): string {
 
 function normalizeLine(line: string): string {
   return line.replace(/\s+/g, " ").trim();
+}
+
+function hasMissingDataHint(value: string): boolean {
+  const normalized = normalizeForMatch(value);
+  return MISSING_DATA_HINT_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
 function splitTextIntoLines(text: string): string[] {
@@ -396,7 +402,7 @@ function extractListRuleProposal(
     return emptyListRuleProposal(extractMissingDataEvidence(lines, keywords));
   }
 
-  if (MISSING_DATA_HINT_PATTERNS.some((pattern) => pattern.test(extraction.snippet))) {
+  if (hasMissingDataHint(extraction.snippet)) {
     return emptyListRuleProposal({
       reason: buildMissingDataReason(extraction.snippet),
       source_excerpt: extraction.snippet,
@@ -440,7 +446,7 @@ function extractMissingDataEvidence(
       continue;
     }
 
-    if (!MISSING_DATA_HINT_PATTERNS.some((pattern) => pattern.test(line))) {
+    if (!hasMissingDataHint(line)) {
       continue;
     }
 
