@@ -65,6 +65,11 @@ interface TextExtraction {
   confidence: PlanningExtractionConfidence;
 }
 
+interface ProposalMissingDataEvidence {
+  reason: string;
+  source_excerpt: string;
+}
+
 const MAX_SOURCE_ARTICLES = 8;
 const INSUFFICIENT_WARNING_PATTERNS = [
   "falta ficha urbanistica",
@@ -78,6 +83,19 @@ const INSUFFICIENT_WARNING_PATTERNS = [
   "documento leido, pero no contiene parametros",
   "falta documento de planeamiento",
   "falta ficha de zona",
+];
+const MISSING_DATA_HINT_PATTERNS = [
+  "ficha urbanistica",
+  "fichas urbanisticas",
+  "ficha de zona",
+  "documento complementario",
+  "planeamiento de desarrollo",
+  "plan parcial",
+  "estudio de detalle",
+  "se define en",
+  "se determina en",
+  "remite a",
+  "segun ficha",
 ];
 
 function hasText(value: string | null | undefined): value is string {
@@ -173,6 +191,11 @@ function appendText(base: string, additions: string[]): string {
 
 function normalizeLine(line: string): string {
   return line.replace(/\s+/g, " ").trim();
+}
+
+function hasMissingDataHint(value: string): boolean {
+  const normalized = normalizeForMatch(value);
+  return MISSING_DATA_HINT_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
 function splitTextIntoLines(text: string): string[] {
@@ -292,50 +315,53 @@ function extractMetricFromLinesWithRegex(
   return null;
 }
 
-function emptyNumericRuleProposal(): PlanningNumericRuleProposal {
+function emptyNumericRuleProposal(
+  missingData?: ProposalMissingDataEvidence | null,
+): PlanningNumericRuleProposal {
   return {
     value: null,
     confidence: "low",
-    source_excerpt: "",
+    source_excerpt: missingData?.source_excerpt ?? "",
+    reason: missingData?.reason ?? "",
     status: "proposed",
   };
 }
 
-function emptyListRuleProposal(): PlanningListRuleProposal {
+function emptyListRuleProposal(
+  missingData?: ProposalMissingDataEvidence | null,
+): PlanningListRuleProposal {
   return {
     values: [],
     confidence: "low",
-    source_excerpt: "",
+    source_excerpt: missingData?.source_excerpt ?? "",
+    reason: missingData?.reason ?? "",
     status: "proposed",
   };
-}
-
-function normalizeProposalStatus(
-  status: PlanningRuleProposalStatus | null | undefined,
-): PlanningRuleProposalStatus {
-  return status ?? "proposed";
 }
 
 function buildNumericRuleProposal(
   extraction: MetricExtraction | null,
+  missingData?: ProposalMissingDataEvidence | null,
 ): PlanningNumericRuleProposal {
   if (!extraction) {
-    return emptyNumericRuleProposal();
+    return emptyNumericRuleProposal(missingData);
   }
 
   return {
     value: extraction.numericValue,
     confidence: extraction.confidence,
     source_excerpt: extraction.snippet,
+    reason: "",
     status: "proposed",
   };
 }
 
 function extractFloorCount(
   textExtraction: TextExtraction | null,
+  missingData?: ProposalMissingDataEvidence | null,
 ): PlanningNumericRuleProposal {
   if (!textExtraction) {
-    return emptyNumericRuleProposal();
+    return emptyNumericRuleProposal(missingData);
   }
 
   const match = textExtraction.value.match(/\d+(?:[.,]\d+)?/);
@@ -344,6 +370,7 @@ function extractFloorCount(
       value: null,
       confidence: textExtraction.confidence,
       source_excerpt: textExtraction.snippet,
+      reason: missingData?.reason ?? "",
       status: "proposed",
     };
   }
@@ -352,6 +379,7 @@ function extractFloorCount(
     value: parseMetricNumber(match[0]),
     confidence: textExtraction.confidence,
     source_excerpt: textExtraction.snippet,
+    reason: "",
     status: "proposed",
   };
 }
@@ -371,34 +399,140 @@ function extractListRuleProposal(
 ): PlanningListRuleProposal {
   const extraction = extractTextFieldFromLines(lines, keywords);
   if (!extraction) {
-    return emptyListRuleProposal();
+    return emptyListRuleProposal(extractMissingDataEvidence(lines, keywords));
   }
 
+  if (hasMissingDataHint(extraction.snippet)) {
+    return emptyListRuleProposal({
+      reason: buildMissingDataReason(extraction.snippet),
+      source_excerpt: extraction.snippet,
+    });
+  }
+
+  const values = splitRuleListValues(extraction.value);
+  const missingData =
+    values.length === 0 ? extractMissingDataEvidence(lines, keywords) : null;
+
   return {
-    values: splitRuleListValues(extraction.value),
+    values,
     confidence: extraction.confidence,
     source_excerpt: extraction.snippet,
+    reason: missingData?.reason ?? "",
     status: "proposed",
   };
+}
+
+function buildMissingDataReason(line: string): string {
+  const normalized = normalizeForMatch(line);
+
+  if (
+    normalized.includes("ficha urbanistica") ||
+    normalized.includes("fichas urbanisticas") ||
+    normalized.includes("ficha de zona")
+  ) {
+    return "El documento remite a ficha urbanistica para este parametro.";
+  }
+
+  return "No se ha podido determinar este parametro. Requiere ficha urbanistica o documento complementario.";
+}
+
+function extractMissingDataEvidence(
+  lines: string[],
+  keywords: string[],
+): ProposalMissingDataEvidence | null {
+  for (const line of lines) {
+    const normalized = normalizeForMatch(line);
+    if (!keywords.some((keyword) => normalized.includes(normalizeForMatch(keyword)))) {
+      continue;
+    }
+
+    if (!hasMissingDataHint(line)) {
+      continue;
+    }
+
+    return {
+      reason: buildMissingDataReason(line),
+      source_excerpt: line,
+    };
+  }
+
+  return null;
 }
 
 export function extractPlanningRulesProposalFromText(
   text: string,
 ): PlanningRulesProposal {
   const lines = splitTextIntoLines(text);
+  const buildabilityKeywords = [
+    "edificabilidad",
+    "aprovechamiento",
+    "indice de edificabilidad",
+    "indice de aprovechamiento",
+  ];
+  const occupancyKeywords = [
+    "ocupacion maxima",
+    "ocupacion",
+    "porcentaje de ocupacion",
+  ];
+  const maxHeightKeywords = [
+    "altura maxima",
+    "altura total",
+    "altura reguladora",
+    "altura a cumbrera",
+    "cumbrera",
+    "altura al alero",
+    "alero",
+  ];
+  const maxFloorsKeywords = [
+    "numero maximo de plantas",
+    "maximo de plantas",
+    "plantas maximas",
+    "alturas",
+  ];
+  const setbackFrontKeywords = [
+    "retranqueo frontal",
+    "retranqueo a calle",
+    "retranqueo a vial",
+    "alineacion",
+    "frente",
+    "fachada principal",
+  ];
+  const setbackRearKeywords = [
+    "retranqueo posterior",
+    "retranqueo trasero",
+    "retranqueo al fondo",
+    "fondo de parcela",
+    "fondo",
+  ];
+  const setbackSideKeywords = [
+    "retranqueo lateral",
+    "retranqueo a linderos",
+    "retranqueo a lindero",
+    "lateral",
+    "lindero",
+    "linderos",
+  ];
+  const usesAllowedKeywords = [
+    "usos permitidos",
+    "uso permitido",
+    "usos autorizados",
+    "uso caracteristico",
+    "uso compatible",
+  ];
+  const usesForbiddenKeywords = [
+    "usos prohibidos",
+    "uso prohibido",
+    "usos incompatibles",
+    "uso no permitido",
+  ];
   const buildabilityRatio = extractMetricFromLinesWithRegex(
     lines,
-    [
-      "edificabilidad",
-      "aprovechamiento",
-      "indice de edificabilidad",
-      "indice de aprovechamiento",
-    ],
+    buildabilityKeywords,
     /\d+(?:[.,]\d+)?\s*(?:m2|m²)\s*\/\s*(?:m2|m²)/i,
   );
   const occupancyPercent = extractMetricFromLinesWithRegex(
     lines,
-    ["ocupacion maxima", "ocupacion", "porcentaje de ocupacion"],
+    occupancyKeywords,
     /\d+(?:[.,]\d+)?\s*%/i,
   );
   const maxHeightMetric =
@@ -409,74 +543,57 @@ export function extractPlanningRulesProposalFromText(
     ) ??
     extractMetricFromLines(lines, ["altura a cumbrera", "cumbrera"], "m") ??
     extractMetricFromLines(lines, ["altura al alero", "alero"], "m");
-  const maxFloors = extractTextFieldFromLines(
-    lines,
-    [
-      "numero maximo de plantas",
-      "maximo de plantas",
-      "plantas maximas",
-      "alturas",
-    ],
-  );
-  const setbackFront = extractMetricFromLines(
-    lines,
-    [
-      "retranqueo frontal",
-      "retranqueo a calle",
-      "retranqueo a vial",
-      "alineacion",
-      "frente",
-      "fachada principal",
-    ],
-    "m",
-  );
-  const setbackRear = extractMetricFromLines(
-    lines,
-    [
-      "retranqueo posterior",
-      "retranqueo trasero",
-      "retranqueo al fondo",
-      "fondo de parcela",
-      "fondo",
-    ],
-    "m",
-  );
-  const setbackSide = extractMetricFromLines(
-    lines,
-    [
-      "retranqueo lateral",
-      "retranqueo a linderos",
-      "retranqueo a lindero",
-      "lateral",
-      "lindero",
-      "linderos",
-    ],
-    "m",
-  );
+  const maxFloors = extractTextFieldFromLines(lines, maxFloorsKeywords);
+  const setbackFront = extractMetricFromLines(lines, setbackFrontKeywords, "m");
+  const setbackRear = extractMetricFromLines(lines, setbackRearKeywords, "m");
+  const setbackSide = extractMetricFromLines(lines, setbackSideKeywords, "m");
+  const maxHeightMissingData =
+    maxHeightMetric === null
+      ? extractMissingDataEvidence(lines, maxHeightKeywords)
+      : null;
+  const maxFloorsMissingData =
+    maxFloors === null || maxFloors.value.match(/\d+(?:[.,]\d+)?/) === null
+      ? extractMissingDataEvidence(lines, maxFloorsKeywords)
+      : null;
+  const buildabilityMissingData =
+    buildabilityRatio === null
+      ? extractMissingDataEvidence(lines, buildabilityKeywords)
+      : null;
+  const occupancyMissingData =
+    occupancyPercent === null
+      ? extractMissingDataEvidence(lines, occupancyKeywords)
+      : null;
+  const setbackFrontMissingData =
+    setbackFront === null
+      ? extractMissingDataEvidence(lines, setbackFrontKeywords)
+      : null;
+  const setbackRearMissingData =
+    setbackRear === null
+      ? extractMissingDataEvidence(lines, setbackRearKeywords)
+      : null;
+  const setbackSideMissingData =
+    setbackSide === null
+      ? extractMissingDataEvidence(lines, setbackSideKeywords)
+      : null;
 
   return {
-    max_height_m: buildNumericRuleProposal(maxHeightMetric),
-    max_floors: extractFloorCount(maxFloors),
-    buildability_m2_m2: buildNumericRuleProposal(buildabilityRatio),
-    occupancy_percent: buildNumericRuleProposal(occupancyPercent),
+    max_height_m: buildNumericRuleProposal(maxHeightMetric, maxHeightMissingData),
+    max_floors: extractFloorCount(maxFloors, maxFloorsMissingData),
+    buildability_m2_m2: buildNumericRuleProposal(
+      buildabilityRatio,
+      buildabilityMissingData,
+    ),
+    occupancy_percent: buildNumericRuleProposal(
+      occupancyPercent,
+      occupancyMissingData,
+    ),
     setbacks: {
-      front_m: buildNumericRuleProposal(setbackFront),
-      rear_m: buildNumericRuleProposal(setbackRear),
-      side_m: buildNumericRuleProposal(setbackSide),
+      front_m: buildNumericRuleProposal(setbackFront, setbackFrontMissingData),
+      rear_m: buildNumericRuleProposal(setbackRear, setbackRearMissingData),
+      side_m: buildNumericRuleProposal(setbackSide, setbackSideMissingData),
     },
-    uses_allowed: extractListRuleProposal(lines, [
-      "usos permitidos",
-      "uso permitido",
-      "usos autorizados",
-      "uso caracteristico",
-      "uso compatible",
-    ]),
-    uses_forbidden: extractListRuleProposal(lines, [
-      "usos prohibidos",
-      "uso prohibido",
-      "usos incompatibles",
-      "uso no permitido",
-    ]),
+    uses_allowed: extractListRuleProposal(lines, usesAllowedKeywords),
+    uses_forbidden: extractListRuleProposal(lines, usesForbiddenKeywords),
   };
 }
 

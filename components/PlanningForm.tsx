@@ -126,12 +126,53 @@ function nextEditedStatus(
   return current === "accepted" ? "accepted" : "edited";
 }
 
+function hasNumericProposalValue(proposal: PlanningNumericRuleProposal): boolean {
+  return typeof proposal.value === "number";
+}
+
+function hasListProposalValue(proposal: PlanningListRuleProposal): boolean {
+  return proposal.values.length > 0;
+}
+
+function countApplicableAcceptedRules(
+  proposal: PlanningRulesProposal,
+): number {
+  let count = 0;
+
+  if (proposal.max_floors.status === "accepted" && hasNumericProposalValue(proposal.max_floors)) {
+    count += 1;
+  }
+
+  if (
+    proposal.occupancy_percent.status === "accepted" &&
+    hasNumericProposalValue(proposal.occupancy_percent)
+  ) {
+    count += 1;
+  }
+
+  if (
+    proposal.setbacks.front_m.status === "accepted" &&
+    hasNumericProposalValue(proposal.setbacks.front_m)
+  ) {
+    count += 1;
+  }
+
+  return count;
+}
+
+function proposalMissingValueMessage(): string {
+  return "No se ha podido determinar este parametro. Requiere ficha urbanistica o documento complementario.";
+}
+
 export function PlanningForm({
   assets,
   planning,
   site,
   onChange,
 }: PlanningFormProps) {
+  const acceptedApplicableRulesCount = countApplicableAcceptedRules(
+    planning.rules_proposal,
+  );
   const [message, setMessage] = useState("");
   const [planningSourceFile, setPlanningSourceFile] = useState<File | null>(null);
   const [extractingPdf, setExtractingPdf] = useState(false);
@@ -521,6 +562,7 @@ export function PlanningForm({
   function renderProposalActions(
     title: string,
     status: PlanningRuleProposalStatus,
+    canAccept: boolean,
     onAccept: () => void,
     onReject: () => void,
   ) {
@@ -530,8 +572,9 @@ export function PlanningForm({
           {title}: {statusLabel(status)}
         </span>
         <button
-          className="rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink"
+          className="rounded-md border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
+          disabled={!canAccept}
           onClick={onAccept}
         >
           Aceptar
@@ -543,7 +586,58 @@ export function PlanningForm({
         >
           Rechazar
         </button>
+        {!canAccept && (
+          <span className="text-xs text-ink/70">
+            {proposalMissingValueMessage()}
+          </span>
+        )}
       </div>
+    );
+  }
+
+  function renderNumericProposalMeta(proposal: PlanningNumericRuleProposal) {
+    return (
+      <>
+        <span className="mt-1 block text-xs font-semibold text-ink/75">
+          {hasNumericProposalValue(proposal)
+            ? `Valor detectado: ${proposal.value}`
+            : "Sin valor aplicable detectado"}
+        </span>
+        <span className="mt-1 block text-xs text-ink/60">
+          Confianza: {proposal.confidence}
+        </span>
+        <span className="mt-1 block text-xs text-ink/70">
+          Extracto: {proposal.source_excerpt || "Sin extracto"}
+        </span>
+        {proposal.reason && (
+          <span className="mt-1 block text-xs text-amber-800">
+            Motivo: {proposal.reason}
+          </span>
+        )}
+      </>
+    );
+  }
+
+  function renderListProposalMeta(proposal: PlanningListRuleProposal) {
+    return (
+      <>
+        <span className="mt-1 block text-xs font-semibold text-ink/75">
+          {hasListProposalValue(proposal)
+            ? `Valores detectados: ${proposal.values.join(", ")}`
+            : "Sin valor aplicable detectado"}
+        </span>
+        <span className="mt-1 block text-xs text-ink/60">
+          Confianza: {proposal.confidence}
+        </span>
+        <span className="mt-1 block text-xs text-ink/70">
+          Extracto: {proposal.source_excerpt || "Sin extracto"}
+        </span>
+        {proposal.reason && (
+          <span className="mt-1 block text-xs text-amber-800">
+            Motivo: {proposal.reason}
+          </span>
+        )}
+      </>
     );
   }
 
@@ -729,11 +823,14 @@ export function PlanningForm({
               </p>
             </div>
             <button
-              className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink"
+              className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
               type="button"
+              disabled={acceptedApplicableRulesCount === 0}
               onClick={applyAcceptedRules}
             >
-              Aplicar reglas aceptadas a normativa
+              {acceptedApplicableRulesCount > 0
+                ? `Aplicar ${acceptedApplicableRulesCount} reglas aceptadas`
+                : "No hay reglas aceptadas aplicables"}
             </button>
           </div>
 
@@ -748,18 +845,15 @@ export function PlanningForm({
                 onChange={(event) =>
                   changeNumericProposal("buildability_m2_m2", {
                     value: parseNumericInput(event.target.value),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.buildability_m2_m2.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.buildability_m2_m2.source_excerpt || "Sin extracto"}
-              </span>
+              {renderNumericProposalMeta(planning.rules_proposal.buildability_m2_m2)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.buildability_m2_m2.status,
+                hasNumericProposalValue(planning.rules_proposal.buildability_m2_m2),
                 () => changeNumericProposal("buildability_m2_m2", { status: "accepted" }),
                 () => changeNumericProposal("buildability_m2_m2", { status: "rejected" }),
               )}
@@ -775,18 +869,15 @@ export function PlanningForm({
                 onChange={(event) =>
                   changeNumericProposal("occupancy_percent", {
                     value: parseNumericInput(event.target.value),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.occupancy_percent.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.occupancy_percent.source_excerpt || "Sin extracto"}
-              </span>
+              {renderNumericProposalMeta(planning.rules_proposal.occupancy_percent)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.occupancy_percent.status,
+                hasNumericProposalValue(planning.rules_proposal.occupancy_percent),
                 () => changeNumericProposal("occupancy_percent", { status: "accepted" }),
                 () => changeNumericProposal("occupancy_percent", { status: "rejected" }),
               )}
@@ -802,18 +893,15 @@ export function PlanningForm({
                 onChange={(event) =>
                   changeNumericProposal("max_height_m", {
                     value: parseNumericInput(event.target.value),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.max_height_m.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.max_height_m.source_excerpt || "Sin extracto"}
-              </span>
+              {renderNumericProposalMeta(planning.rules_proposal.max_height_m)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.max_height_m.status,
+                hasNumericProposalValue(planning.rules_proposal.max_height_m),
                 () => changeNumericProposal("max_height_m", { status: "accepted" }),
                 () => changeNumericProposal("max_height_m", { status: "rejected" }),
               )}
@@ -829,18 +917,15 @@ export function PlanningForm({
                 onChange={(event) =>
                   changeNumericProposal("max_floors", {
                     value: parseNumericInput(event.target.value),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.max_floors.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.max_floors.source_excerpt || "Sin extracto"}
-              </span>
+              {renderNumericProposalMeta(planning.rules_proposal.max_floors)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.max_floors.status,
+                hasNumericProposalValue(planning.rules_proposal.max_floors),
                 () => changeNumericProposal("max_floors", { status: "accepted" }),
                 () => changeNumericProposal("max_floors", { status: "rejected" }),
               )}
@@ -856,18 +941,15 @@ export function PlanningForm({
                 onChange={(event) =>
                   changeSetbackProposal("front_m", {
                     value: parseNumericInput(event.target.value),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.setbacks.front_m.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.setbacks.front_m.source_excerpt || "Sin extracto"}
-              </span>
+              {renderNumericProposalMeta(planning.rules_proposal.setbacks.front_m)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.setbacks.front_m.status,
+                hasNumericProposalValue(planning.rules_proposal.setbacks.front_m),
                 () => changeSetbackProposal("front_m", { status: "accepted" }),
                 () => changeSetbackProposal("front_m", { status: "rejected" }),
               )}
@@ -883,18 +965,15 @@ export function PlanningForm({
                 onChange={(event) =>
                   changeSetbackProposal("rear_m", {
                     value: parseNumericInput(event.target.value),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.setbacks.rear_m.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.setbacks.rear_m.source_excerpt || "Sin extracto"}
-              </span>
+              {renderNumericProposalMeta(planning.rules_proposal.setbacks.rear_m)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.setbacks.rear_m.status,
+                hasNumericProposalValue(planning.rules_proposal.setbacks.rear_m),
                 () => changeSetbackProposal("rear_m", { status: "accepted" }),
                 () => changeSetbackProposal("rear_m", { status: "rejected" }),
               )}
@@ -910,18 +989,15 @@ export function PlanningForm({
                 onChange={(event) =>
                   changeSetbackProposal("side_m", {
                     value: parseNumericInput(event.target.value),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.setbacks.side_m.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.setbacks.side_m.source_excerpt || "Sin extracto"}
-              </span>
+              {renderNumericProposalMeta(planning.rules_proposal.setbacks.side_m)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.setbacks.side_m.status,
+                hasNumericProposalValue(planning.rules_proposal.setbacks.side_m),
                 () => changeSetbackProposal("side_m", { status: "accepted" }),
                 () => changeSetbackProposal("side_m", { status: "rejected" }),
               )}
@@ -938,18 +1014,15 @@ export function PlanningForm({
                       .split(/\r?\n|,/)
                       .map((item) => item.trim())
                       .filter(Boolean),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.uses_allowed.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.uses_allowed.source_excerpt || "Sin extracto"}
-              </span>
+              {renderListProposalMeta(planning.rules_proposal.uses_allowed)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.uses_allowed.status,
+                hasListProposalValue(planning.rules_proposal.uses_allowed),
                 () => changeListProposal("uses_allowed", { status: "accepted" }),
                 () => changeListProposal("uses_allowed", { status: "rejected" }),
               )}
@@ -966,18 +1039,15 @@ export function PlanningForm({
                       .split(/\r?\n|,/)
                       .map((item) => item.trim())
                       .filter(Boolean),
+                    reason: "",
                   })
                 }
               />
-              <span className="mt-1 block text-xs text-ink/60">
-                Confianza: {planning.rules_proposal.uses_forbidden.confidence}
-              </span>
-              <span className="mt-1 block text-xs text-ink/70">
-                {planning.rules_proposal.uses_forbidden.source_excerpt || "Sin extracto"}
-              </span>
+              {renderListProposalMeta(planning.rules_proposal.uses_forbidden)}
               {renderProposalActions(
                 "Estado",
                 planning.rules_proposal.uses_forbidden.status,
+                hasListProposalValue(planning.rules_proposal.uses_forbidden),
                 () => changeListProposal("uses_forbidden", { status: "accepted" }),
                 () => changeListProposal("uses_forbidden", { status: "rejected" }),
               )}
