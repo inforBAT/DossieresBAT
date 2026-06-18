@@ -496,7 +496,7 @@ export function PlanningForm({
       setLinkCandidates(payload.candidates ?? []);
       setMessage(
         (payload.candidates?.length ?? 0) > 0
-          ? "Se han encontrado posibles documentos complementarios. Revisa y elige la fuente mas fiable."
+          ? "Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela."
           : payload.warnings?.[0] ||
               "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
       );
@@ -1101,7 +1101,7 @@ export function PlanningForm({
         {linkCandidates.length > 0 && (
           <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
             <p className="mb-3 text-sm font-semibold text-ink">
-              Se han encontrado documentos candidatos. Revisa y elige el que mejor encaje con la parcela.
+              Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela.
             </p>
             <div className="space-y-3">
               {linkCandidates.map((candidate) => (
