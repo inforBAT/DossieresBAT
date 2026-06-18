@@ -6,6 +6,7 @@ import {
   applyAcceptedPlanningRulesProposal,
   applyPlanningExtractionProposal,
   hasClearPlanningSourceArticles,
+  hasPlanningReviewNotesNeedingComplementaryDocuments,
   needsComplementaryPlanningDocuments,
   type PlanningExtractionResult,
 } from "@/lib/planningTextExtractor";
@@ -51,11 +52,6 @@ interface DiscoverPlanningResponse {
   error?: string;
 }
 
-interface PlanningGuidanceState {
-  title: string;
-  description: string;
-}
-
 function normalizeHtmlError(html: string): string {
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -92,19 +88,10 @@ async function readPdfExtractionResponse(
   };
 }
 
-function buildPlanningGuidance(
-  extraction: PlanningExtractionResult,
-): PlanningGuidanceState | null {
-  if (!needsComplementaryPlanningDocuments(extraction)) {
-    return null;
-  }
-
-  return {
-    title:
-      "El PDF se ha leido con IA, pero parece ser una ordenanza general. Falta la ficha urbanistica o el ambito aplicable a la parcela.",
-    description:
-      "Siguiente paso recomendado: usa direccion, municipio y referencia catastral para buscar documentos complementarios, o sube manualmente la ficha urbanistica, PGOU o plano de zonificacion.",
-  };
+function shouldShowPlanningGuidance(planning: PlanningBlock): boolean {
+  return hasPlanningReviewNotesNeedingComplementaryDocuments(
+    planning.review_notes,
+  );
 }
 
 function statusLabel(status: PlanningRuleProposalStatus): string {
@@ -180,8 +167,7 @@ export function PlanningForm({
   const [discoveringPlanning, setDiscoveringPlanning] = useState(false);
   const [processingCandidateUrl, setProcessingCandidateUrl] = useState("");
   const [linkCandidates, setLinkCandidates] = useState<PlanningLinkCandidate[]>([]);
-  const [planningGuidance, setPlanningGuidance] =
-    useState<PlanningGuidanceState | null>(null);
+  const planningGuidance = shouldShowPlanningGuidance(planning);
 
   function changePlanning(patch: Partial<PlanningBlock>) {
     onChange({
@@ -321,7 +307,6 @@ export function PlanningForm({
   ) {
     const applied = applyPlanningExtractionProposal(planningBase, extraction);
     changePlanning(applied.planning);
-    setPlanningGuidance(buildPlanningGuidance(extraction));
 
     const hasClearSources = hasClearPlanningSourceArticles(extraction);
     const needsComplementaryDocs =
@@ -511,7 +496,7 @@ export function PlanningForm({
       setLinkCandidates(payload.candidates ?? []);
       setMessage(
         (payload.candidates?.length ?? 0) > 0
-          ? "Se han encontrado posibles documentos complementarios. Revisa y elige la fuente mas fiable."
+          ? "Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela."
           : payload.warnings?.[0] ||
               "No se han encontrado documentos complementarios automaticamente. Sube manualmente ficha urbanistica, PGOU o plano de zonificacion.",
       );
@@ -1089,9 +1074,11 @@ export function PlanningForm({
 
         {planningGuidance && (
           <div className="md:col-span-2 rounded-md border border-amber-300 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-ink">{planningGuidance.title}</p>
+            <p className="text-sm font-semibold text-ink">
+              El PDF se ha leido con IA, pero parece ser una ordenanza general. Falta la ficha urbanistica o el ambito aplicable a la parcela.
+            </p>
             <p className="mt-2 text-sm text-ink/80">
-              {planningGuidance.description}
+              Siguiente paso recomendado: usa direccion, municipio y referencia catastral para buscar documentos complementarios, o sube manualmente la ficha urbanistica, PGOU o plano de zonificacion.
             </p>
             <div className="mt-3 flex flex-wrap gap-3">
               <button
@@ -1114,7 +1101,7 @@ export function PlanningForm({
         {linkCandidates.length > 0 && (
           <div className="md:col-span-2 rounded-md border border-line bg-white p-4">
             <p className="mb-3 text-sm font-semibold text-ink">
-              Se han encontrado documentos candidatos. Revisa y elige el que mejor encaje con la parcela.
+              Se han encontrado posibles documentos complementarios. Revisa y selecciona el que corresponda a la parcela.
             </p>
             <div className="space-y-3">
               {linkCandidates.map((candidate) => (

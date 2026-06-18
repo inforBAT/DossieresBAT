@@ -181,6 +181,21 @@ export function needsComplementaryPlanningDocuments(
   });
 }
 
+export function hasPlanningReviewNotesNeedingComplementaryDocuments(
+  reviewNotes: string,
+): boolean {
+  return splitTextIntoLines(reviewNotes).some((line) => {
+    const normalizedLine = normalizeForMatch(line);
+    return (
+      normalizedLine.includes("documento insuficiente para la parcela concreta") ||
+      normalizedLine.includes("documentos complementarios requeridos") ||
+      INSUFFICIENT_WARNING_PATTERNS.some((pattern) =>
+        normalizedLine.includes(pattern),
+      )
+    );
+  });
+}
+
 function appendText(base: string, additions: string[]): string {
   return uniqueStrings(
     [base, ...additions]
